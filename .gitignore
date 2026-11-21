@@ -1,0 +1,22 @@
+node_modules
+dist
+dist-ssr
+*.local
+.DS_Store
+
+# Android build outputs (generated on the build machine)
+android/app/build
+android/build
+android/.gradle
+android/local.properties
+android/*.iml
+
+# Release signing — NEVER commit these
+*.keystore
+*.jks
+keystore.properties
+android/app/*.keystore
+
+# Env / secrets
+.env
+.env.*

@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Job Status — AtotheI Carpentry</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; background: #f4f4f2; color: #1a1a1a; margin: 0; padding: 24px 16px; }
+  .wrap { max-width: 560px; margin: 0 auto; }
+  .card { background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 20px; margin-bottom: 12px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  .muted { color: #6b7280; font-size: 14px; }
+  input { font: inherit; width: 100%; min-height: 48px; border: 1px solid #d1d5db; border-radius: 10px; padding: 10px 12px; text-transform: uppercase; letter-spacing: 2px; }
+  button { font: inherit; min-height: 48px; border-radius: 10px; border: none; background: #ea580c; color: #fff; font-weight: 700; padding: 10px 18px; cursor: pointer; }
+  .pill { display: inline-block; font-size: 13px; font-weight: 700; padding: 4px 12px; border-radius: 999px; background: #dbeafe; color: #1d4ed8; }
+  .big { font-size: 20px; font-weight: 700; }
+  a { color: #ea580c; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <h1>🔨 AtotheI Carpentry</h1>
+    <p class="muted">Check your job status with the code from your contractor.</p>
+    <form id="code-form">
+      <input id="code" maxlength="6" placeholder="JOB CODE" autocomplete="off" />
+      <p><button type="submit">Check status</button></p>
+    </form>
+  </div>
+  <div class="card" id="result" style="display:none"></div>
+  <p class="muted">This page shows only a first name, job type, and status. A code is not a password — it only opens this one public lookup. No address, phone, money, or photos are published here.</p>
+</div>
+<script>
+// Customer status page — no backend, no login.
+// Reads ?code=XXXXXX from the URL, fetches jobs.json from this same
+// folder, and shows first name / job type / status for that code.
+// jobs.json is exported from the Carpentry Jobs app (Settings →
+// "Export public status feed"). Upload both files to GitHub Pages.
+const STATUS_LABELS = {
+  enquiry: 'Enquiry — quote coming',
+  bid: 'Bid — waiting on your answer',
+  accepted: 'Accepted — on the books',
+  scheduled: 'Scheduled — date set',
+  'in-progress': 'In progress — work underway',
+  done: 'Done — finished',
+  'follow-up': 'Follow-up — checking in',
+  lost: 'Bid closed',
+  cancelled: 'Cancelled'
+};
+
+function getCode() {
+  const p = new URLSearchParams(location.search);
+  const c = (p.get('code') || '').trim().toUpperCase();
+  return c;
+}
+
+async function lookup(code) {
+  const box = document.getElementById('result');
+  box.style.display = 'block';
+  box.innerHTML = '<p>Looking up <b>' + code + '</b>…</p>';
+  let feed;
+  try {
+    const res = await fetch('jobs.json', { cache: 'no-store' });
+    if (!res.ok) throw new Error('jobs.json not found (HTTP ' + res.status + ')');
+    feed = await res.json();
+  } catch (e) {
+    box.innerHTML = '<p><b>Could not load the status list.</b></p><p class="muted">The contractor has not published jobs.json yet, or this page is not on GitHub Pages. ' + e.message + '</p>';
+    return;
+  }
+  const job = (feed.jobs || []).find(j => String(j.code || '').toUpperCase() === code);
+  if (!job) {
+    box.innerHTML = '<p><b>No job matches code ' + code + '.</b></p><p class="muted">Check the code on your paperwork and try again.</p>';
+    return;
+  }
+  const fb = feed.feedbackFormUrl
+    ? '<p><a href="' + feed.feedbackFormUrl + '">Leave feedback for this job</a> — you will need your code: <b>' + job.code + '</b></p>'
+    : '';
+  box.innerHTML =
+    '<p>Hi, <span class="big">' + escapeHtml(job.firstName || 'there') + '</span></p>' +
+    '<p>Job type: <b>' + escapeHtml(job.jobType || '') + '</b></p>' +
+    '<p>Status: <span class="pill">' + escapeHtml(STATUS_LABELS[job.status] || job.status || '') + '</span></p>' +
+    fb;
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+document.getElementById('code-form').addEventListener('submit', e => {
+  e.preventDefault();
+  const code = document.getElementById('code').value.trim().toUpperCase();
+  if (!code) return;
+  history.replaceState(null, '', '?code=' + encodeURIComponent(code));
+  lookup(code);
+});
+
+const initial = getCode();
+if (initial) {
+  document.getElementById('code').value = initial;
+  lookup(initial);
+}
+</script>
+</body>
+</html>
