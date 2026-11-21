@@ -55,12 +55,7 @@ jobs:
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
           echo "$KEYSTORE_BASE64" | base64 -d > android/app/carpentry-release.keystore
-          cat > android/keystore.properties << 'EOF'
-          storeFile=carpentry-release.keystore
-          storePassword=$KEYSTORE_PASSWORD
-          keyAlias=$KEY_ALIAS
-          keyPassword=$KEY_PASSWORD
-          EOF
+          printf 'storeFile=carpentry-release.keystore\nstorePassword=%s\nkeyAlias=%s\nkeyPassword=%s\n' "$KEYSTORE_PASSWORD" "$KEY_ALIAS" "$KEY_PASSWORD" > android/keystore.properties
           cd android && chmod +x gradlew && ./gradlew assembleRelease
           cp app/build/outputs/apk/release/app-release.apk ../CarpentryJobs.apk
           rm -f app/carpentry-release.keystore ../android/keystore.properties
