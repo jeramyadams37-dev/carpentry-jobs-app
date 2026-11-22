@@ -982,7 +982,7 @@ export function defaultStore() {
       // invoices, and contracts.
       municipalLicenses: [],
       geminiApiKey: '',
-      geminiModel: 'gemini-2.0-flash',
+      geminiModel: 'gemini-3.8-flash',
       defaultLaborRate: 65,
       // Pricing defaults — new bids start with these. Markup default is
       // 20%, inside the usual 15–30% range for materials.
@@ -1068,7 +1068,7 @@ export function quickbooksCSV(store, period) {
 
 export function parseImport(text) {
   const parsed = JSON.parse(text)
-  if (!parsed || !Array.isArray(parsed.jobs)) throw new Error('That file does not look like a Carpentry Jobs backup (no jobs list).')
+  if (!parsed || !Array.isArray(parsed.jobs)) throw new Error('That file does not look like a Bid to Finish backup (no jobs list).')
   return {
     version: 1,
     jobs: parsed.jobs,

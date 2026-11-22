@@ -1,12 +1,14 @@
 import React, { useState } from 'react'
-import { askGemini, jobContextBlock, PROMPT_CHIPS } from '../lib/gemini.js'
+import { askGemini, jobContextBlock, extractJson, bidExtractPrompt, PROMPT_CHIPS } from '../lib/gemini.js'
 import { nowISO, uid } from '../lib/store.js'
 
-export default function AiHelp({ store, job, onUpdateStore, goSettings }) {
+export default function AiHelp({ store, job, onUpdateStore, goSettings, goJob }) {
   const settings = store.settings || {}
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
+  const [applying, setApplying] = useState('')
 
   const history = job ? (job.aiHistory || []) : (store.aiGeneral || [])
 
@@ -54,6 +56,44 @@ export default function AiHelp({ store, job, onUpdateStore, goSettings }) {
     saveHistory([])
   }
 
+  // Turn a Gemini chat answer into a bid draft on this job. Gemini extracts
+  // the numbers as strict JSON; the draft lands on a new bid for review in
+  // the Bids tab — nothing is accepted or final until the carpenter says so.
+  // Only shown when the chat is job-aware.
+  async function applyAnswer(msg) {
+    if (!job) return
+    if (!settings.geminiApiKey) {
+      setError('No Gemini key yet. Add your free key in Settings first — applying an answer uses your own key.')
+      return
+    }
+    setError('')
+    setNotice('')
+    setApplying(msg.id)
+    try {
+      const text = await askGemini(settings.geminiApiKey, settings.geminiModel, [{ role: 'user', text: bidExtractPrompt(msg.text, job) }])
+      const parsed = extractJson(text)
+      if (!parsed || parsed.noBid || (!parsed.scope && !(Array.isArray(parsed.materials) && parsed.materials.length))) {
+        setError('Gemini could not pull usable numbers from that answer — the text is still in the chat above to copy from.')
+        return
+      }
+      const newId = uid()
+      const validityDays = Number(settings.quoteValidityDays ?? 30) || 0
+      const validUntil = validityDays > 0 ? new Date(Date.now() + validityDays * 86400000).toISOString().slice(0, 10) : ''
+      onUpdateStore((s) => {
+        const j = s.jobs.find((x) => x.id === job.id)
+        if (!j) return
+        const b = { id: newId, label: `Bid ${(j.bids || []).length + 1} (Gemini draft)`, scope: j.description || '', materials: [], labor: 0, other: 0, createdAt: nowISO(), laborRate: Number(settings.defaultLaborRate) || 0, markupPct: Number(settings.defaultMarkupPct ?? 20) || 0, overheadPct: Number(settings.defaultOverheadPct) || 0, validUntil, bidDraft: { raw: text, parsed, createdAt: nowISO(), source: 'chat' } }
+        j.bids = [...(j.bids || []), b]
+        j.updatedAt = nowISO()
+      })
+      setNotice('Draft saved as a new bid on this job — open the job and check the Bids tab to review it. Nothing is accepted or final.')
+    } catch (e) {
+      setError('Applying that answer failed: ' + (e.message || e))
+    } finally {
+      setApplying('')
+    }
+  }
+
   return (
     <div className="page">
       <h1>{job ? `Ask Gemini — ${job.title || 'this job'}` : 'Ask Gemini'}</h1>
@@ -68,6 +108,12 @@ export default function AiHelp({ store, job, onUpdateStore, goSettings }) {
         </div>
       )}
       {error && <div className="kbd-note" style={{ marginBottom: 12, background: '#fee2e2', borderColor: '#fca5a5' }}>{error}</div>}
+      {notice && (
+        <div className="kbd-note" style={{ marginBottom: 12, background: '#dcfce7', borderColor: '#86efac' }}>
+          {notice}
+          {job && goJob && <div className="row" style={{ marginTop: 8 }}><button className="small dark" onClick={() => goJob(job.id)}>Open this job</button></div>}
+        </div>
+      )}
 
       <div className="chips">
         {PROMPT_CHIPS.map((c) => (
@@ -78,7 +124,16 @@ export default function AiHelp({ store, job, onUpdateStore, goSettings }) {
       <div className="chatbox">
         {history.length === 0 && <p className="muted">No questions yet. Tap a suggestion above or type your own.</p>}
         {history.map((m) => (
-          <div key={m.id} className={`msg ${m.role === 'user' ? 'user' : 'ai'}`}>{m.text}</div>
+          <div key={m.id}>
+            <div className={`msg ${m.role === 'user' ? 'user' : 'ai'}`}>{m.text}</div>
+            {m.role === 'model' && job && (
+              <div className="row" style={{ marginBottom: 8 }}>
+                <button className="small dark" onClick={() => applyAnswer(m)} disabled={applying === m.id || !settings.geminiApiKey}>
+                  {applying === m.id ? 'Applying…' : '✨ Apply this answer to the bid'}
+                </button>
+              </div>
+            )}
+          </div>
         ))}
         {busy && <div className="msg ai">Thinking…</div>}
       </div>
@@ -88,7 +143,7 @@ export default function AiHelp({ store, job, onUpdateStore, goSettings }) {
         <button className="primary" onClick={() => send()} disabled={busy || !settings.geminiApiKey}>Ask</button>
       </div>
       {history.length > 0 && <button className="small" style={{ marginTop: 8 }} onClick={clearHistory}>Clear this chat history</button>}
-      <p className="muted">Model: {settings.geminiModel || 'gemini-2.0-flash'} (free tier, changeable in Settings). Requests go straight from this phone to Google — no backend, no middleman.</p>
+      <p className="muted">Model: {settings.geminiModel || 'gemini-3.8-flash'} (free tier, changeable in Settings). Requests go straight from this phone to Google — no backend, no middleman.</p>
     </div>
   )
 }

@@ -95,14 +95,14 @@ export async function shareFile(filename, base64, mime, text) {
 export async function shareText(text, title) {
   if (!isNative()) {
     if (navigator.share) {
-      await navigator.share({ title: title || 'Carpentry Jobs', text })
+      await navigator.share({ title: title || 'Bid to Finish', text })
       return 'Shared.'
     }
     await Clipboard.write({ string: text })
     return 'Copied to clipboard (browser has no share sheet here).'
   }
   try {
-    await Share.share({ title: title || 'Carpentry Jobs', text, dialogTitle: title || 'Share' })
+    await Share.share({ title: title || 'Bid to Finish', text, dialogTitle: title || 'Share' })
     return 'Shared.'
   } catch (e) {
     if (String(e && e.message).includes('cancel')) return 'Share cancelled.'

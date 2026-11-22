@@ -10,7 +10,7 @@ const BACKUP_DIR = 'carpentry-jobs-backups'
 const KEEP = 7
 
 function backupName(dateISO) {
-  return `carpentry-jobs-backup_${dateISO}.json`
+  return `bid-to-finish-backup_${dateISO}.json`
 }
 
 function b64Of(text) {
@@ -46,7 +46,7 @@ export async function autoBackupIfDue(store) {
 export async function pruneBackups() {
   try {
     const list = await Filesystem.readdir({ path: BACKUP_DIR, directory: Directory.Documents })
-    const files = (list.files || []).map((f) => f.name).filter((n) => n.startsWith('carpentry-jobs-backup_')).sort()
+    const files = (list.files || []).map((f) => f.name).filter((n) => n.startsWith('bid-to-finish-backup_') || n.startsWith('carpentry-jobs-backup_')).sort()
     const extra = files.slice(0, Math.max(0, files.length - KEEP))
     for (const name of extra) {
       await Filesystem.deleteFile({ path: `${BACKUP_DIR}/${name}`, directory: Directory.Documents }).catch(() => {})
@@ -60,7 +60,7 @@ export async function pruneBackups() {
 export async function listAutoBackups() {
   try {
     const list = await Filesystem.readdir({ path: BACKUP_DIR, directory: Directory.Documents })
-    return (list.files || []).map((f) => f.name).filter((n) => n.startsWith('carpentry-jobs-backup_')).sort().reverse()
+    return (list.files || []).map((f) => f.name).filter((n) => n.startsWith('bid-to-finish-backup_') || n.startsWith('carpentry-jobs-backup_')).sort().reverse()
   } catch (e) {
     return []
   }

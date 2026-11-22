@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
-    <string name="app_name">Carpentry Jobs</string>
-    <string name="title_activity_main">Carpentry Jobs</string>
+    <string name="app_name">Bid to Finish</string>
+    <string name="title_activity_main">Bid to Finish</string>
     <string name="package_name">com.atothei.carpentryjobs</string>
     <string name="custom_url_scheme">com.atothei.carpentryjobs</string>
 </resources>

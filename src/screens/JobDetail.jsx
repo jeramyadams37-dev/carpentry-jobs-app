@@ -14,7 +14,7 @@ import {
 } from '../lib/store.js'
 import { HRRA_THRESHOLD, HRRA_PAMPHLET_NAME, HRRA_PAMPHLET_SUMMARY, hrraAmount, hrraApplies, hrraAcknowledged } from '../lib/hrra.js'
 import { quotePDF, invoicePDF, workOrderPDF, contractPDF, feedbackPDF, lienWaiverPDF, payApplicationPDF } from '../lib/pdf.js'
-import { askGeminiVision, extractJson, bidPhotoPrompt, receiptPrompt } from '../lib/gemini.js'
+import { askGemini, askGeminiVision, extractJson, bidPhotoPrompt, bidDraftPrompt, receiptPrompt } from '../lib/gemini.js'
 import { saveToDownloads, shareFile, shareText, copyText } from '../lib/files.js'
 import { CODE_SECTIONS, checklistForJob } from '../lib/codeRef.js'
 import { StatusPill, Confirm, Stars } from '../components/ui.jsx'
@@ -804,6 +804,8 @@ function BidsTab({ job, showCompare, setShowCompare, newBidLabel, setNewBidLabel
   const bids = job.bids || []
   const [analyzing, setAnalyzing] = useState('')
   const [analysisFor, setAnalysisFor] = useState('')
+  const [drafting, setDrafting] = useState(false)
+  const [draftFor, setDraftFor] = useState('')
   const [asmId, setAsmId] = useState('')
   const [asmQty, setAsmQty] = useState('')
   const [asmBidId, setAsmBidId] = useState('')
@@ -854,12 +856,13 @@ function BidsTab({ job, showCompare, setShowCompare, newBidLabel, setNewBidLabel
     }
   }
 
-  function applyAnalysis(bid) {
-    const parsed = bid.analysis && bid.analysis.parsed
+  function applyParsedDraft(bid, parsed) {
     if (!parsed) { toast('No structured draft to apply — read the text and type the lines in by hand.'); return }
     const patch = {}
     if (parsed.scope) patch.scope = parsed.scope
     if (parsed.laborHours) patch.laborHours = parsed.laborHours
+    if (Number(parsed.laborRate) > 0) patch.laborRate = Number(parsed.laborRate)
+    if (Number(parsed.other) > 0) patch.other = Number(parsed.other)
     updateBid(bid.id, patch)
     if (Array.isArray(parsed.materials) && parsed.materials.length) {
       onUpdate((d) => {
@@ -871,6 +874,52 @@ function BidsTab({ job, showCompare, setShowCompare, newBidLabel, setNewBidLabel
     toast('Draft applied to the estimate — review every line before you send it. Nothing is finalized by the AI.')
   }
 
+  function applyAnalysis(bid) {
+    applyParsedDraft(bid, bid.analysis && bid.analysis.parsed)
+  }
+
+  function applyBidDraft(bid) {
+    applyParsedDraft(bid, bid.bidDraft && bid.bidDraft.parsed)
+  }
+
+  // Draft a whole bid with Gemini, from the job itself (description,
+  // measurements, notes, labor rate and markup). Same draft-only rule as
+  // photo analysis: the draft lands on a bid for review, nothing is
+  // accepted or final until the carpenter says so.
+  async function draftBidWithGemini() {
+    if (!settings.geminiApiKey) {
+      toast('Add your Gemini key in Settings first — bid drafting uses your own key, and the job details are sent to Google\'s Gemini API.')
+      return
+    }
+    setDrafting(true)
+    try {
+      const text = await askGemini(settings.geminiApiKey, settings.geminiModel, [{ role: 'user', text: bidDraftPrompt(job, settings) }])
+      const parsed = extractJson(text)
+      // Reuse a still-empty bid if one exists, else create a new one.
+      const empty = bids.find((b) => (b.materials || []).length === 0 && !Number(b.laborHours) && !Number(b.other) && (!b.scope || b.scope === (job.description || '')))
+      let bidId
+      if (empty) {
+        bidId = empty.id
+      } else {
+        bidId = uid()
+        const validityDays = Number(settings.quoteValidityDays ?? 30) || 0
+        const validUntil = validityDays > 0 ? new Date(Date.now() + validityDays * 86400000).toISOString().slice(0, 10) : ''
+        const label = `Bid ${bids.length + 1} (Gemini draft)`
+        onUpdate((d) => {
+          const b = { id: bidId, label, scope: d.description || '', materials: [], labor: 0, other: 0, createdAt: nowISO(), laborRate: Number(settings.defaultLaborRate) || 0, markupPct: Number(settings.defaultMarkupPct ?? 20) || 0, overheadPct: Number(settings.defaultOverheadPct) || 0, validUntil }
+          d.bids = [...(d.bids || []), b]
+        })
+      }
+      updateBid(bidId, { bidDraft: { raw: text, parsed: parsed || null, createdAt: nowISO(), source: 'draft' } })
+      setDraftFor(bidId)
+      toast(parsed ? 'Gemini drafted a bid — review it below, then use it as the estimate.' : 'Gemini answered as text (no structured draft) — read it below and copy what you need.')
+    } catch (e) {
+      toast('Bid drafting failed: ' + (e.message || e))
+    } finally {
+      setDrafting(false)
+    }
+  }
+
   return (
     <div>
       <div className="card">
@@ -880,6 +929,12 @@ function BidsTab({ job, showCompare, setShowCompare, newBidLabel, setNewBidLabel
           <input value={newBidLabel} onChange={(e) => setNewBidLabel(e.target.value)} placeholder="Bid label (e.g. Bid 2 — pine)" />
           <button className="primary" onClick={addBid}>+ Add bid</button>
         </div>
+        <div className="row wrap" style={{ marginTop: 10 }}>
+          <button className="small dark" onClick={draftBidWithGemini} disabled={drafting}>
+            {drafting ? 'Drafting bid…' : '✨ Draft bid with Gemini'}
+          </button>
+        </div>
+        <p className="muted">Gemini drafts a full bid from this job — description, measurements, notes, and your labor rate and markup — as editable line items on a new bid. You review every line; nothing is accepted or final.</p>
         {bids.length > 1 && (
           <div className="row" style={{ marginTop: 10 }}>
             <button className="small" onClick={() => setShowCompare(!showCompare)}>{showCompare ? 'Hide comparison' : 'Compare bids side by side'}</button>
@@ -1006,6 +1061,11 @@ function BidsTab({ job, showCompare, setShowCompare, newBidLabel, setNewBidLabel
                 {analysisFor === b.id ? 'Hide analysis' : 'Show analysis'}
               </button>
             )}
+            {b.bidDraft && (
+              <button className="small" onClick={() => setDraftFor(draftFor === b.id ? '' : b.id)}>
+                {draftFor === b.id ? 'Hide bid draft' : 'Show bid draft'}
+              </button>
+            )}
           </div>
           {analysis && analysisFor === b.id && (
             <div className="kbd-note" style={{ marginTop: 10 }}>
@@ -1026,6 +1086,28 @@ function BidsTab({ job, showCompare, setShowCompare, newBidLabel, setNewBidLabel
                 </div>
               ) : (
                 <p style={{ whiteSpace: 'pre-wrap' }}>{analysis.raw}</p>
+              )}
+            </div>
+          )}
+          {b.bidDraft && draftFor === b.id && (
+            <div className="kbd-note" style={{ marginTop: 10 }}>
+              <p><b>Gemini bid draft</b> — {fmtDateTime(b.bidDraft.createdAt)}. Review everything before using it.</p>
+              {b.bidDraft.parsed ? (
+                <div>
+                  {b.bidDraft.parsed.scope && <p><b>Scope:</b> {b.bidDraft.parsed.scope}</p>}
+                  {b.bidDraft.parsed.laborHours ? <p><b>Labor hours:</b> {b.bidDraft.parsed.laborHours}{Number(b.bidDraft.parsed.laborRate) > 0 ? ` @ ${money(b.bidDraft.parsed.laborRate)}/hr` : ''}</p> : null}
+                  {Array.isArray(b.bidDraft.parsed.materials) && b.bidDraft.parsed.materials.length > 0 && (
+                    <div>
+                      <b>Materials:</b>
+                      {b.bidDraft.parsed.materials.map((m, i) => <p key={i}>• {m.name} — x{m.qty} @ {money(m.unitCost)}</p>)}
+                    </div>
+                  )}
+                  {Number(b.bidDraft.parsed.other) > 0 && <p><b>Other:</b> {money(b.bidDraft.parsed.other)}</p>}
+                  {b.bidDraft.parsed.notes && <p><b>Notes:</b> {b.bidDraft.parsed.notes}</p>}
+                  <button className="small primary" style={{ marginTop: 8 }} onClick={() => applyBidDraft(b)}>Use this draft as the estimate (editable)</button>
+                </div>
+              ) : (
+                <p style={{ whiteSpace: 'pre-wrap' }}>{b.bidDraft.raw}</p>
               )}
             </div>
           )}

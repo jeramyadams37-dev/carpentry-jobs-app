@@ -1,4 +1,4 @@
-name: Build Carpentry Jobs APK
+name: Build Bid to Finish APK
 
 # Builds a signed release APK on every version tag (v1.0.0, v1.1.0, ...),
 # and a debug APK on manual runs. No secrets are stored in this repo:
@@ -10,6 +10,8 @@ on:
 
 jobs:
   build-android-apk:
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
     # KEYSTORE_BASE64 is set at job level (not step level) because the
     # steps below test it in their `if:` conditions, and step-level env
@@ -57,9 +59,9 @@ jobs:
           echo "$KEYSTORE_BASE64" | base64 -d > android/app/carpentry-release.keystore
           printf 'storeFile=carpentry-release.keystore\nstorePassword=%s\nkeyAlias=%s\nkeyPassword=%s\n' "$KEYSTORE_PASSWORD" "$KEY_ALIAS" "$KEY_PASSWORD" > android/keystore.properties
           cd android && chmod +x gradlew && ./gradlew assembleRelease
-          cp app/build/outputs/apk/release/app-release.apk ../CarpentryJobs.apk
+          cp app/build/outputs/apk/release/app-release.apk ../BidToFinish.apk
           rm -f app/carpentry-release.keystore ../android/keystore.properties
-          echo "Signed release APK ready: CarpentryJobs.apk"
+          echo "Signed release APK ready: BidToFinish.apk"
 
       # Fallback when the signing secrets are not set yet: an unsigned
       # debug APK so the run still hands back something installable.
@@ -67,15 +69,15 @@ jobs:
         if: ${{ env.KEYSTORE_BASE64 == '' }}
         run: |
           cd android && chmod +x gradlew && ./gradlew assembleDebug
-          cp app/build/outputs/apk/debug/app-debug.apk ../CarpentryJobs-debug.apk
-          echo "No signing secrets set; handing back debug APK: CarpentryJobs-debug.apk"
+          cp app/build/outputs/apk/debug/app-debug.apk ../BidToFinish-debug.apk
+          echo "No signing secrets set; handing back debug APK: BidToFinish-debug.apk"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: CarpentryJobs-APK
+          name: BidToFinish-APK
           path: |
-            CarpentryJobs.apk
-            CarpentryJobs-debug.apk
+            BidToFinish.apk
+            BidToFinish-debug.apk
           if-no-files-found: error
 
       # GitHub Release on tags, with the APK attached.
@@ -84,7 +86,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            CarpentryJobs.apk
-            CarpentryJobs-debug.apk
+            BidToFinish.apk
+            BidToFinish-debug.apk
           fail_on_unmatched_files: false
           generate_release_notes: true

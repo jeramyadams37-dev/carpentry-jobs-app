@@ -87,7 +87,7 @@ export default function App() {
   return (
     <div className="app">
       <div className="topbar">
-        <h1>🔨 Carpentry Jobs</h1>
+        <h1>🔨 Bid to Finish</h1>
         <div className="sub">AtotheI • bid to finish • on this phone only</div>
       </div>
 
@@ -144,7 +144,7 @@ export default function App() {
       {screen.name === 'calendar' && <Calendar store={store} goJob={(id) => go('job', { jobId: id })} />}
 
       {screen.name === 'ai' && (
-        <AiHelp store={store} job={aiJob || null} onUpdateStore={updateStore} goSettings={() => go('settings')} />
+        <AiHelp store={store} job={aiJob || null} onUpdateStore={updateStore} goSettings={() => go('settings')} goJob={(id) => go('job', { jobId: id })} />
       )}
 
       {screen.name === 'code' && <CodeRef />}
@@ -194,7 +194,7 @@ export default function App() {
           </div>
           <div className="card">
             <h2>About</h2>
-            <p className="muted">Carpentry Jobs v1.1.0 — AtotheI. Your jobs live only on this phone. Export a backup from Settings regularly. Contracts are draft templates, not legal advice. Code reference is reference only — the local inspector has the final say.</p>
+            <p className="muted">Bid to Finish v1.2.0 — AtotheI. Your jobs live only on this phone. Export a backup from Settings regularly. Contracts are draft templates, not legal advice. Code reference is reference only — the local inspector has the final say.</p>
           </div>
         </div>
       )}

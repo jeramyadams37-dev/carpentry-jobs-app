@@ -24,7 +24,7 @@ export default function Settings({ store, onUpdateStore, toast }) {
       const json = exportJSON(store)
       const b64 = btoa(unescape(encodeURIComponent(json)))
       const stamp = new Date().toISOString().slice(0, 10)
-      const where = await saveToDownloads(`carpentry-jobs-backup_${stamp}.json`, b64, 'application/json')
+      const where = await saveToDownloads(`bid-to-finish-backup_${stamp}.json`, b64, 'application/json')
       toast('Backup — ' + where)
     } catch (e) { toast('Backup failed: ' + (e.message || e)) }
   }
@@ -34,7 +34,7 @@ export default function Settings({ store, onUpdateStore, toast }) {
       const json = exportJSON(store)
       const b64 = btoa(unescape(encodeURIComponent(json)))
       const stamp = new Date().toISOString().slice(0, 10)
-      await shareFile(`carpentry-jobs-backup_${stamp}.json`, b64, 'application/json', 'Carpentry Jobs backup')
+      await shareFile(`bid-to-finish-backup_${stamp}.json`, b64, 'application/json', 'Bid to Finish backup')
       toast('Backup shared.')
     } catch (e) { toast('Share failed: ' + (e.message || e)) }
   }
@@ -176,7 +176,7 @@ export default function Settings({ store, onUpdateStore, toast }) {
         <label>Gemini API key</label>
         <input type="password" value={settings.geminiApiKey || ''} onChange={(e) => set('geminiApiKey', e.target.value.trim())} placeholder="Paste your key here" autoComplete="off" />
         <label>Model (free tier default)</label>
-        <input value={settings.geminiModel || ''} onChange={(e) => set('geminiModel', e.target.value.trim())} placeholder="gemini-2.0-flash" />
+        <input value={settings.geminiModel || ''} onChange={(e) => set('geminiModel', e.target.value.trim())} placeholder="gemini-3.8-flash" />
         <div className="row" style={{ marginTop: 10 }}>
           <button className="small dark" onClick={testKey} disabled={!settings.geminiApiKey}>Test key</button>
           <button className="small" onClick={async () => toast(await copyText('https://aistudio.google.com/'))}>Copy AI Studio link</button>
@@ -218,7 +218,7 @@ export default function Settings({ store, onUpdateStore, toast }) {
 
       <div className="card">
         <h2>About</h2>
-        <p className="muted">Carpentry Jobs v1.1.0 — AtotheI. Local-first, offline, no account, no backend. Contracts are draft templates, not legal advice. Code reference is reference only — the local inspector has the final say. Paid ads are not in v1; the ad screen makes post-ready drafts for Facebook.</p>
+        <p className="muted">Bid to Finish v1.2.0 — AtotheI. Local-first, offline, no account, no backend. Contracts are draft templates, not legal advice. Code reference is reference only — the local inspector has the final say. Paid ads are not in v1; the ad screen makes post-ready drafts for Facebook.</p>
         <button className="danger" onClick={() => setConfirm({ title: 'Delete ALL data?', body: 'Every job, note, photo, and setting is wiped from this phone. Export a backup first — this cannot be undone.', ok: 'Delete everything', fn: () => onUpdateStore((s) => { s.jobs = []; s.aiGeneral = [] }) })}>Delete all data</button>
       </div>
 

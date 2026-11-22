@@ -2,7 +2,7 @@ import type { CapacitorConfig } from '@capacitor/cli'
 
 const config: CapacitorConfig = {
   appId: 'com.atothei.carpentryjobs',
-  appName: 'Carpentry Jobs',
+  appName: 'Bid to Finish',
   webDir: 'dist',
   backgroundColor: '#111827',
   android: {

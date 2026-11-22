@@ -1,4 +1,4 @@
-# Carpentry Jobs — AtotheI
+# Bid to Finish — AtotheI
 
 A phone app for carpentry jobs, from bid to finish. Jobs pipeline, estimate
 builder, before-photo analysis, time tracking, invoices, receipts, profit/loss,
@@ -9,7 +9,16 @@ lives on the phone. Your Gemini key (if you add one) lives on the phone too.
 
 - **App ID:** `com.atothei.carpentryjobs`
 - **Stack:** Capacitor + Vite + React (same pattern as AutoHustle)
-- **Version:** 1.1.0
+- **Version:** 1.2.0
+
+---
+
+## What's new in v1.2
+
+- **Renamed to Bid to Finish** — same app, new name and a new hammer launcher icon. The app ID is unchanged, so v1.2 installs right over the old Carpentry Jobs build.
+- **Gemini builds the bid — you review it** — two new buttons, both drafts only, nothing is ever accepted or final without you. In the Bids tab, "✨ Draft bid with Gemini" drafts a full bid from the job (description, measurements, notes, your labor rate and markup) as editable line items on a new bid. In the Ask Gemini chat, "✨ Apply this answer to the bid" under any Gemini answer pulls the numbers out of that answer into a new bid draft on the same job. Prices are always single numbers — if Gemini's answer gives a range, the draft uses the fixed price stated or the midpoint, and says so in the notes. Phases go in the scope/notes text with all line items merged into one bid.
+- **Gemini default is now gemini-3.8-flash** — Google retired gemini-2.0-flash. The new default works on the free tier. If you already typed `gemini-3.8-flash` into Settings, nothing changes for you.
+- **Release step fixed** — the build token now has `contents: write`, so tagged builds create the GitHub Release with the APK attached (v1.1's release step failed on permissions).
 
 ---
 
@@ -232,7 +241,7 @@ lives on the phone. Your Gemini key (if you add one) lives on the phone too.
   in Settings — stored on-device only. No key is bundled in the app, code,
   chat, or repo, and there is no shared-key fallback. No key = the screen
   explains how to get a free one from Google AI Studio.
-- Free tier: default model `gemini-2.0-flash`, changeable in Settings.
+- Free tier: default model `gemini-3.8-flash`, changeable in Settings.
   Requests go straight from the phone to Google — no backend, no middleman.
 - Job-aware: asking from a job attaches that job's context (description,
   materials, tools, bid amounts, notes). General mode works with no job.
@@ -285,21 +294,21 @@ backup to the phone's Documents folder, plus manual export/share).
 ### 1. Create the GitHub repo (on the phone, Termux)
 
 ```bash
-gh repo create carpentry-jobs-app --public --description "Carpentry Jobs — bid to finish. AtotheI. Local-first Capacitor app."
+gh repo create carpentry-jobs-app --public --description "Bid to Finish — AtotheI. Local-first Capacitor app for carpentry jobs, bid to finish."
 ```
 
 ### 2. Unzip this project and push it
 
-The zip is `carpentry-jobs-app-v1.1.zip`. Copy it to Downloads first, then:
+The zip is `carpentry-jobs-app-v1.2.zip`. Copy it to Downloads first, then:
 
 ```bash
 cd ~/storage/downloads
 rm -rf carpentry-jobs-app
-unzip -o carpentry-jobs-app-v1.1.zip
+unzip -o carpentry-jobs-app-v1.2.zip
 cd carpentry-jobs-app
 git init -b main
 git add .
-git commit -m "Carpentry Jobs v1.1.0 — bid to finish"
+git commit -m "Bid to Finish v1.2.0"
 git remote add origin https://github.com/jeramyadams37-dev/carpentry-jobs-app.git
 git push -u origin main
 ```
@@ -345,32 +354,32 @@ them, a manual run builds a debug APK instead.
 
 ```bash
 cd ~/storage/downloads/carpentry-jobs-app
-git tag v1.1.0
-git push origin v1.1.0
+git tag v1.2.0
+git push origin v1.2.0
 ```
 
-Then GitHub → repo → **Actions** → watch the "Build Carpentry Jobs APK"
+Then GitHub → repo → **Actions** → watch the "Build Bid to Finish APK"
 run. When it is green, open the run → **Artifacts** → download
-`CarpentryJobs.apk` (or grab it from the GitHub Release the run creates).
+`BidToFinish.apk` (or grab it from the GitHub Release the run creates).
 
-To rebuild after a change, bump the tag (`v1.1.1`, …) and push it.
+To rebuild after a change, bump the tag (`v1.2.1`, …) and push it.
 
 ### 6. Install on the phone — delete the old APK first
 
 ```bash
-rm -f ~/storage/downloads/CarpentryJobs.apk
+rm -f ~/storage/downloads/BidToFinish.apk
 ```
 
 Then download the fresh APK into Downloads (browser, or `gh run download`),
 and install it:
 
 ```bash
-termux-open ~/storage/downloads/CarpentryJobs.apk
+termux-open ~/storage/downloads/BidToFinish.apk
 ```
 
 If the install prompt does not surface, tap the APK in the Files app.
 If the phone says the package conflicts with an existing app, uninstall the
-old Carpentry Jobs first, then install again. (Uninstalling wipes the app's
+old app first, then install again. (Uninstalling wipes the app's
 data — **export a backup from Settings first**.)
 
 ---
