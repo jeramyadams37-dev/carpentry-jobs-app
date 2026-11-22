@@ -101,6 +101,44 @@ export async function askGeminiVision(apiKey, model, prompt, images) {
   return text
 }
 
+// ---- Gemini audio (voice-note transcription) ----
+// A recorded voice note sent as inline audio — same bring-your-own key as
+// text chat. If the model cannot read the audio, the caller keeps the
+// recording and says so plainly; transcription never deletes anything.
+export async function askGeminiAudio(apiKey, model, prompt, audioDataUrl) {
+  const m = (model || 'gemini-3.8-flash').trim()
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(m)}:generateContent?key=${encodeURIComponent(apiKey)}`
+  const comma = String(audioDataUrl || '').indexOf(',')
+  const b64 = comma >= 0 ? String(audioDataUrl).slice(comma + 1) : String(audioDataUrl)
+  const mime = String(audioDataUrl).includes('audio/mp4') ? 'audio/mp4'
+    : String(audioDataUrl).includes('audio/wav') ? 'audio/wav'
+    : String(audioDataUrl).includes('audio/ogg') ? 'audio/ogg'
+    : 'audio/webm'
+  const parts = [{ text: prompt }, { inline_data: { mime_type: mime, data: b64 } }]
+  let res
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contents: [{ role: 'user', parts }] }),
+    })
+  } catch (e) {
+    throw new Error('Could not reach Google. Check the connection and try again.')
+  }
+  let data = null
+  try { data = await res.json() } catch (e) { /* ignore */ }
+  if (!res.ok) {
+    const msg = (data && data.error && data.error.message) || `Google returned ${res.status}`
+    if (res.status === 400) throw new Error('Google rejected the audio: ' + msg)
+    if (res.status === 401 || res.status === 403) throw new Error('Google rejected the API key: ' + msg + ' — check the key in Settings.')
+    if (res.status === 429) throw new Error('Free-tier limit hit for now. Wait a bit and try again.')
+    throw new Error(msg)
+  }
+  const text = data?.candidates?.[0]?.content?.parts?.map((p) => p.text || '').join('') || ''
+  if (!text) throw new Error('Google returned an empty transcription.')
+  return text
+}
+
 // Pull a JSON object out of a model reply (it often wraps it in fences).
 export function extractJson(text) {
   if (!text) return null
@@ -142,7 +180,23 @@ export function receiptPrompt() {
 // Both bid buttons use this pattern: Gemini returns ONE JSON object, the
 // app stores it as a draft on a new bid, and the carpenter reviews every
 // line in the estimate builder. Nothing is ever accepted or final.
-export function bidDraftPrompt(job, settings) {
+
+// Format a saved Gemini chat history for a prompt. Oldest to newest (the
+// model needs the conversation in order), capped at the most recent 20
+// messages so a very long chat does not blow up the request. Returns ''
+// when there is no history, so callers can append it unconditionally.
+export function chatHistoryBlock(history, note) {
+  const msgs = (history || []).filter((m) => m && m.text)
+  if (!msgs.length) return ''
+  const cap = 20
+  const shown = msgs.slice(-cap)
+  const lines = [`CONVERSATION SO FAR${msgs.length > cap ? ` (most recent ${cap} of ${msgs.length} messages)` : ''} — the carpenter's chat with Gemini about this job:`]
+  for (const m of shown) lines.push(`${m.role === 'user' ? 'Carpenter' : 'Gemini'}: ${m.text}`)
+  if (note) lines.push(note)
+  return lines.join('\n')
+}
+
+export function bidDraftPrompt(job, settings, history) {
   const rate = Number(settings?.defaultLaborRate) || 65
   const markup = Number(settings?.defaultMarkupPct ?? 20) || 0
   return [
@@ -161,12 +215,15 @@ export function bidDraftPrompt(job, settings) {
     'If the job has phases (for example a fixed demo phase and a rebuild phase), put the phase breakdown in the scope and notes text, and merge all line items into this ONE bid — do not split it into multiple bids.',
     'If something is unclear, say so in notes instead of guessing.',
     jobContextBlock(job),
+    chatHistoryBlock(history, 'Use the conversation too — it may hold corrections, occupancy or tenant details, phase structure, and prices already discussed. If the conversation and the job fields disagree, the conversation\'s latest correction wins.'),
   ].filter(Boolean).join('\n')
 }
 
 // Pull a bid out of a free-text Gemini chat answer. Same JSON shape as the
 // draft prompt; if the answer has no usable numbers, say so with noBid.
-export function bidExtractPrompt(answerText, job) {
+// `history` is the full conversation up to and including that answer — the
+// model needs the earlier turns for details the answer assumes.
+export function bidExtractPrompt(answerText, job, history) {
   return [
     'Extract a bid from the carpentry advice below. Return ONLY a JSON object (no other text) with this shape:',
     '{ "scope": "short scope of work",',
@@ -176,6 +233,7 @@ export function bidExtractPrompt(answerText, job) {
     '  "notes": "anything the advice flagged as uncertain, including any phase breakdown" }',
     'Rules: every price and quantity must be a SINGLE number — never a range. If the answer states a fixed price, use it. If it states a range, use the midpoint. If the answer contains no usable prices or quantities, return exactly: { "noBid": true }.',
     job ? jobContextBlock(job) : '',
+    chatHistoryBlock(history, 'The conversation above is the full context for the advice below — use it for corrections and details the answer assumes (year built, occupancy, phases, prices already agreed).'),
     'ADVICE TO EXTRACT FROM:',
     answerText,
   ].filter(Boolean).join('\n')

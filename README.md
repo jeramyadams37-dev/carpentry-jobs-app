@@ -9,7 +9,26 @@ lives on the phone. Your Gemini key (if you add one) lives on the phone too.
 
 - **App ID:** `com.atothei.carpentryjobs`
 - **Stack:** Capacitor + Vite + React (same pattern as AutoHustle)
-- **Version:** 1.2.0
+- **Version:** 1.2.1
+
+---
+
+## What's new in v1.2.1
+
+- **Launcher icon actually fixed** — v1.2.0 renamed the app and redrew the launcher PNGs, but Android 16 uses the adaptive icon, and that still pointed at the old Capacitor robot. This build ships proper adaptive-icon assets: the orange hammer as the foreground and the dark tile as the background, generated from `assets/icon.svg`. **Uninstall the old app from your phone first, then install this APK** — installing over the old one often keeps the launcher's cached old icon. Your jobs are safe: the app auto-backs up to Documents and restore reads both old and new backup names.
+- **Gemini bid drafts use the full chat history** — the Bids-tab "Draft bid with Gemini" button and the chat "Apply this answer to the bid" button now send the whole Gemini conversation on the job along with the job fields (most recent 20 messages if the chat is very long), so corrections, tenant and occupancy details, phase structure, and prices already discussed in chat make it into the draft. Jobs with no chat history work exactly as before. Drafts are still drafts — you review every line before anything is final.
+- **Dark mode + more color** — the app was nearly all white. Dark is now the default (dark slate screens, light text, orange brand accents), with a Light / Dark switch in Settings that takes effect right away. Light mode got color too: warm background, orange topbar line, orange section bars and stat tiles, orange active chips.
+- **Document previews** — quotes, contracts, and timesheets can now be read inside the app before anything is sent: "Preview quote" on the Bids tab, "Preview contract" on the Contract tab, "Preview timesheet" on the Time tab. Each preview shows exactly what its PDF will contain (same numbers, same lines, built from the same data), with a Share button that shares the matching PDF — the timesheet shares as text, since it has no PDF. Previews are read-only; editing still happens on the tabs.
+- **Material price book** — Settings now has an editable price book (name, unit price, taxable). When adding a material line to a bid, pick from the price book and the name, price, and tax flag fill in. It comes seeded with nine common item names only (drywall 1/2" 4x8, 2x4x8 stud, joint compound, drywall screws, paint gallon, primer, trim, caulk, insulation batt) with blank prices for you to fill — no prices invented.
+- **Job templates** — "New job from template" on Home and the Jobs tab: drywall patch, interior wall rebuild, trim install/replace, deck repair, door hang. Each pre-fills description/scope, starter materials (priced from your price book where a price exists), labor hours, and a starter punch list. Everything is editable after creation, like any job.
+- **Shopping list from the accepted bid** — once a bid is accepted, the Bids tab shows a shopping list of its materials with quantities, check-off boxes as you buy them, and a running total (all materials vs still to buy). Checked state stays on the job.
+- **Voice notes** — on a job's Notes section, record a voice note with the phone mic, play it back in-app, and optionally "Transcribe with Gemini" (your key) to turn it into a text note. If transcription fails, the recording is still saved.
+- **Auto payment reminders** — when an invoice or milestone is overdue, the Money tab shows "Remind customer" (and a "Remind" button per overdue milestone). It drafts the reminder text (amount, job, due date) and opens the share sheet so you tap send — nothing is ever sent automatically. Overdue invoices also show up on Home under "Needs attention".
+- **Deposit due alerts** — Home "Needs attention" lists jobs starting within 7 days with no deposit recorded, and the job Overview warns when the scheduled date is near and no deposit payment exists.
+- **Helper hours** — the Time tab logs helper entries (name, hours, rate, date) per job; helper pay feeds the job's actual costs and P&L, and helper hours now appear on the timesheet preview.
+- **Quote expiry nudges** — next to a quote's expiry date: "Extend quote by 14 days", "Re-quote as a new draft", and "Nudge customer" (drafts a follow-up message for you to send). Expiring/expired quotes appear on Home under "Needs attention".
+- **End-of-day summary** — a "Today" card on Home: hours logged today, money in today, jobs due today, overdue count, and a line for yesterday. A card, not a notification.
+- **Weather check on scheduled jobs** — on a job Overview, "Check weather" geocodes the job address (OpenStreetMap, free, no key) and fetches the Open-Meteo forecast for the scheduled date, warning clearly if rain is likely. The result is cached on the job. If there is no address, no date, or no network, it shows a plain note instead of an error.
 
 ---
 
@@ -299,16 +318,16 @@ gh repo create carpentry-jobs-app --public --description "Bid to Finish — Atot
 
 ### 2. Unzip this project and push it
 
-The zip is `carpentry-jobs-app-v1.2.zip`. Copy it to Downloads first, then:
+The zip is `carpentry-jobs-app-v1.2.1.zip`. Copy it to Downloads first, then:
 
 ```bash
 cd ~/storage/downloads
 rm -rf carpentry-jobs-app
-unzip -o carpentry-jobs-app-v1.2.zip
+unzip -o carpentry-jobs-app-v1.2.1.zip
 cd carpentry-jobs-app
 git init -b main
 git add .
-git commit -m "Bid to Finish v1.2.0"
+git commit -m "Bid to Finish v1.2.1"
 git remote add origin https://github.com/jeramyadams37-dev/carpentry-jobs-app.git
 git push -u origin main
 ```
@@ -354,8 +373,8 @@ them, a manual run builds a debug APK instead.
 
 ```bash
 cd ~/storage/downloads/carpentry-jobs-app
-git tag v1.2.0
-git push origin v1.2.0
+git tag v1.2.1
+git push origin v1.2.1
 ```
 
 Then GitHub → repo → **Actions** → watch the "Build Bid to Finish APK"

@@ -59,7 +59,10 @@ export default function AiHelp({ store, job, onUpdateStore, goSettings, goJob })
   // Turn a Gemini chat answer into a bid draft on this job. Gemini extracts
   // the numbers as strict JSON; the draft lands on a new bid for review in
   // the Bids tab — nothing is accepted or final until the carpenter says so.
-  // Only shown when the chat is job-aware.
+  // The FULL conversation up to and including that answer goes along, not
+  // just the one answer — earlier turns hold the corrections and details
+  // (year built, occupancy, phases, prices already agreed) the answer
+  // assumes. Only shown when the chat is job-aware.
   async function applyAnswer(msg) {
     if (!job) return
     if (!settings.geminiApiKey) {
@@ -70,7 +73,9 @@ export default function AiHelp({ store, job, onUpdateStore, goSettings, goJob })
     setNotice('')
     setApplying(msg.id)
     try {
-      const text = await askGemini(settings.geminiApiKey, settings.geminiModel, [{ role: 'user', text: bidExtractPrompt(msg.text, job) }])
+      const idx = history.findIndex((m) => m.id === msg.id)
+      const upto = idx >= 0 ? history.slice(0, idx + 1) : history
+      const text = await askGemini(settings.geminiApiKey, settings.geminiModel, [{ role: 'user', text: bidExtractPrompt(msg.text, job, upto) }])
       const parsed = extractJson(text)
       if (!parsed || parsed.noBid || (!parsed.scope && !(Array.isArray(parsed.materials) && parsed.materials.length))) {
         setError('Gemini could not pull usable numbers from that answer — the text is still in the chat above to copy from.')
@@ -107,9 +112,9 @@ export default function AiHelp({ store, job, onUpdateStore, goSettings, goJob })
           <div className="row" style={{ marginTop: 8 }}><button className="small dark" onClick={goSettings}>Open Settings</button></div>
         </div>
       )}
-      {error && <div className="kbd-note" style={{ marginBottom: 12, background: '#fee2e2', borderColor: '#fca5a5' }}>{error}</div>}
+      {error && <div className="kbd-note" style={{ marginBottom: 12, background: 'var(--red-bg)', borderColor: 'var(--red-line)' }}>{error}</div>}
       {notice && (
-        <div className="kbd-note" style={{ marginBottom: 12, background: '#dcfce7', borderColor: '#86efac' }}>
+        <div className="kbd-note" style={{ marginBottom: 12, background: 'var(--green-bg)', borderColor: 'var(--green-line)' }}>
           {notice}
           {job && goJob && <div className="row" style={{ marginTop: 8 }}><button className="small dark" onClick={() => goJob(job.id)}>Open this job</button></div>}
         </div>

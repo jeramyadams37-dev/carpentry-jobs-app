@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { loadStore, saveStore, newJob, nowISO } from './lib/store.js'
+import { jobFromTemplate } from './lib/templates.js'
 import { checklistForJob } from './lib/codeRef.js'
 import { autoBackupIfDue } from './lib/backup.js'
 import { scheduleAllReminders } from './lib/notify.js'
@@ -12,6 +13,7 @@ import Calendar from './screens/Calendar.jsx'
 import AiHelp from './screens/AiHelp.jsx'
 import CodeRef from './screens/CodeRef.jsx'
 import Settings from './screens/Settings.jsx'
+import Templates from './screens/Templates.jsx'
 import Reports from './screens/Reports.jsx'
 import Customers from './screens/Customers.jsx'
 import Business from './screens/Business.jsx'
@@ -31,6 +33,13 @@ export default function App() {
   const didAutoBackup = useRef(false)
 
   useEffect(() => { saveStore(store) }, [store])
+
+  // Appearance: the theme lives in settings (default dark) and is applied
+  // to <html> so every screen picks it up at once, no restart needed.
+  const theme = (store.settings && store.settings.theme) || 'dark'
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme === 'dark' ? 'dark' : 'light')
+  }, [theme])
 
   // Daily automatic backup (once per app open) + refresh reminders.
   useEffect(() => {
@@ -78,6 +87,14 @@ export default function App() {
     toast.show('Job deleted.')
   }
 
+  function createJobFromTemplate(tpl) {
+    const job = jobFromTemplate(tpl, store.settings, (store.jobs || []).map((j) => j.jobCode))
+    job.codeChecklist = checklistForJob(job)
+    updateStore((s) => { s.jobs = [job, ...(s.jobs || [])] })
+    setScreen({ name: 'job', jobId: job.id })
+    toast.show('Job created from template — edit anything before you quote it.')
+  }
+
   const job = screen.jobId ? (store.jobs || []).find((j) => j.id === screen.jobId) : null
   const aiJob = screen.aiJobId ? (store.jobs || []).find((j) => j.id === screen.aiJobId) : null
   const editJob = screen.editJobId ? (store.jobs || []).find((j) => j.id === screen.editJobId) : null
@@ -101,11 +118,16 @@ export default function App() {
           goReports={() => go('reports')}
           goCustomers={() => go('customers')}
           goBusiness={() => go('business')}
+          goTemplates={() => go('templates')}
         />
       )}
 
+      {screen.name === 'templates' && (
+        <Templates onUse={createJobFromTemplate} onCancel={() => go('jobs')} />
+      )}
+
       {screen.name === 'jobs' && (
-        <Jobs store={store} goJob={(id) => go('job', { jobId: id })} goNew={() => go('jobform')} />
+        <Jobs store={store} goJob={(id) => go('job', { jobId: id })} goNew={() => go('jobform')} goTemplates={() => go('templates')} />
       )}
 
       {screen.name === 'jobform' && (
@@ -194,7 +216,7 @@ export default function App() {
           </div>
           <div className="card">
             <h2>About</h2>
-            <p className="muted">Bid to Finish v1.2.0 — AtotheI. Your jobs live only on this phone. Export a backup from Settings regularly. Contracts are draft templates, not legal advice. Code reference is reference only — the local inspector has the final say.</p>
+            <p className="muted">Bid to Finish v1.2.1 — AtotheI. Your jobs live only on this phone. Export a backup from Settings regularly. Contracts are draft templates, not legal advice. Code reference is reference only — the local inspector has the final say.</p>
           </div>
         </div>
       )}

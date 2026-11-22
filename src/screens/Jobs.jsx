@@ -4,7 +4,7 @@ import { StatusPill } from '../components/ui.jsx'
 
 const FILTERS = ['all', 'enquiry', 'bid', 'accepted', 'scheduled', 'in-progress', 'done', 'follow-up', 'lost', 'cancelled']
 
-export default function Jobs({ store, goJob, goNew }) {
+export default function Jobs({ store, goJob, goNew, goTemplates }) {
   const [filter, setFilter] = useState('all')
   const [q, setQ] = useState('')
   const jobs = [...(store.jobs || [])].sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)))
@@ -50,6 +50,7 @@ export default function Jobs({ store, goJob, goNew }) {
         </div>
       ))}
       <button className="primary block" onClick={goNew}>+ New job</button>
+      <button className="block" style={{ marginTop: 8 }} onClick={goTemplates}>📋 New job from template</button>
     </div>
   )
 }

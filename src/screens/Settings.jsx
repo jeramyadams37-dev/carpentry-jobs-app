@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react'
-import { exportJSON, parseImport, publicStatusFeed, fmtDateTime, quickbooksCSV } from '../lib/store.js'
+import { exportJSON, parseImport, publicStatusFeed, fmtDateTime, quickbooksCSV, uid } from '../lib/store.js'
 import { looksLikePOBox } from '../lib/hrra.js'
 import { saveToDownloads, shareFile, copyText } from '../lib/files.js'
 import { askGemini } from '../lib/gemini.js'
@@ -17,6 +17,20 @@ export default function Settings({ store, onUpdateStore, toast }) {
 
   function set(k, v) {
     onUpdateStore((s) => { s.settings = { ...(s.settings || {}), [k]: v } })
+  }
+
+  // Material price book: your usual materials and prices. The Bids tab
+  // picker fills a material line from an entry here.
+  function setPriceBook(id, patch) {
+    onUpdateStore((s) => {
+      const book = s.settings.priceBook || []
+      s.settings.priceBook = patch === null
+        ? book.filter((x) => x.id !== id)
+        : book.map((x) => x.id === id ? { ...x, ...patch } : x)
+    })
+  }
+  function addPriceBookItem() {
+    onUpdateStore((s) => { s.settings.priceBook = [...(s.settings.priceBook || []), { id: uid(), name: '', unitPrice: '', taxable: true }] })
   }
 
   async function exportBackup() {
@@ -114,6 +128,15 @@ export default function Settings({ store, onUpdateStore, toast }) {
       <h1>Settings &amp; data</h1>
 
       <div className="card">
+        <h2>Appearance</h2>
+        <p className="muted">Dark is the default — easier on the eyes on site, and a lot less white. Light keeps the bright look with orange accents. Changes right away, no restart.</p>
+        <div className="row wrap">
+          <button className={'chip' + ((settings.theme || 'dark') === 'dark' ? ' on' : '')} onClick={() => set('theme', 'dark')}>🌙 Dark</button>
+          <button className={'chip' + ((settings.theme || 'dark') === 'light' ? ' on' : '')} onClick={() => set('theme', 'light')}>☀️ Light</button>
+        </div>
+      </div>
+
+      <div className="card">
         <h2>Business (used on PDFs and ads)</h2>
         <label>Business name</label>
         <input value={settings.businessName || ''} onChange={(e) => set('businessName', e.target.value)} />
@@ -123,7 +146,7 @@ export default function Settings({ store, onUpdateStore, toast }) {
         <input value={settings.businessEmail || ''} onChange={(e) => set('businessEmail', e.target.value)} inputMode="email" />
         <label>Physical business address</label>
         <input value={settings.businessAddress || ''} onChange={(e) => set('businessAddress', e.target.value)} placeholder="Street address, city, IL ZIP" />
-        {looksLikePOBox(settings.businessAddress) && <p style={{ color: '#b45309' }}>⚠️ This looks like a P.O. Box — the Illinois HRRA requires a physical business address on the contract.</p>}
+        {looksLikePOBox(settings.businessAddress) && <p style={{ color: 'var(--warn)' }}>⚠️ This looks like a P.O. Box — the Illinois HRRA requires a physical business address on the contract.</p>}
         <p className="muted">Printed on contracts (HRRA requires it) and on quotes and invoices. It must be a physical address, not a P.O. Box.</p>
         <label>Default labor rate ($/hr)</label>
         <input type="number" value={settings.defaultLaborRate ?? 65} onChange={(e) => set('defaultLaborRate', e.target.value)} inputMode="decimal" />
@@ -144,6 +167,20 @@ export default function Settings({ store, onUpdateStore, toast }) {
           <div><label>Retainage on progress billing (%)</label><input type="number" value={settings.retainagePct ?? 10} onChange={(e) => set('retainagePct', e.target.value)} inputMode="decimal" /></div>
         </div>
         <p className="muted">Retainage is held back from each progress payment (default 10%) and released at completion, with the final walkthrough. Per-job retainage can be changed on the job's Money tab.</p>
+      </div>
+
+      <div className="card">
+        <h2>Material price book</h2>
+        <p className="muted">Your usual materials and prices. When you add a material line to a bid, pick from this list and the name, price, and taxable flag fill in. Prices are yours to set — the starter list has names only.</p>
+        {(settings.priceBook || []).map((item) => (
+          <div key={item.id} className="row" style={{ marginBottom: 6 }}>
+            <input value={item.name} onChange={(e) => setPriceBook(item.id, { name: e.target.value })} placeholder="Item name" style={{ flex: 2 }} />
+            <input type="number" value={item.unitPrice ?? ''} onChange={(e) => setPriceBook(item.id, { unitPrice: e.target.value })} placeholder="$ each" style={{ flex: 1 }} inputMode="decimal" />
+            <label title="Taxable — materials and fabricated custom millwork are taxable; installation labor is not" style={{ display: 'flex', alignItems: 'center', gap: 2, fontSize: 12 }}>Tax<input type="checkbox" checked={item.taxable !== false} onChange={(e) => setPriceBook(item.id, { taxable: e.target.checked })} /></label>
+            <button className="small" onClick={() => setPriceBook(item.id, null)}>✕</button>
+          </div>
+        ))}
+        <button className="small primary" onClick={addPriceBookItem}>+ Add material</button>
       </div>
 
       <div className="card">
@@ -218,7 +255,7 @@ export default function Settings({ store, onUpdateStore, toast }) {
 
       <div className="card">
         <h2>About</h2>
-        <p className="muted">Bid to Finish v1.2.0 — AtotheI. Local-first, offline, no account, no backend. Contracts are draft templates, not legal advice. Code reference is reference only — the local inspector has the final say. Paid ads are not in v1; the ad screen makes post-ready drafts for Facebook.</p>
+        <p className="muted">Bid to Finish v1.2.1 — AtotheI. Local-first, offline, no account, no backend. Contracts are draft templates, not legal advice. Code reference is reference only — the local inspector has the final say. Paid ads are not in v1; the ad screen makes post-ready drafts for Facebook.</p>
         <button className="danger" onClick={() => setConfirm({ title: 'Delete ALL data?', body: 'Every job, note, photo, and setting is wiped from this phone. Export a backup first — this cannot be undone.', ok: 'Delete everything', fn: () => onUpdateStore((s) => { s.jobs = []; s.aiGeneral = [] }) })}>Delete all data</button>
       </div>
 

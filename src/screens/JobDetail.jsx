@@ -14,7 +14,10 @@ import {
 } from '../lib/store.js'
 import { HRRA_THRESHOLD, HRRA_PAMPHLET_NAME, HRRA_PAMPHLET_SUMMARY, hrraAmount, hrraApplies, hrraAcknowledged } from '../lib/hrra.js'
 import { quotePDF, invoicePDF, workOrderPDF, contractPDF, feedbackPDF, lienWaiverPDF, payApplicationPDF } from '../lib/pdf.js'
-import { askGemini, askGeminiVision, extractJson, bidPhotoPrompt, bidDraftPrompt, receiptPrompt } from '../lib/gemini.js'
+import { quotePreviewData, contractPreviewData, timesheetPreviewData, previewToText } from '../lib/docPreview.js'
+import PreviewModal from '../components/PreviewModal.jsx'
+import { askGemini, askGeminiVision, askGeminiAudio, extractJson, bidPhotoPrompt, bidDraftPrompt, receiptPrompt } from '../lib/gemini.js'
+import { checkJobWeather } from '../lib/weather.js'
 import { saveToDownloads, shareFile, shareText, copyText } from '../lib/files.js'
 import { CODE_SECTIONS, checklistForJob } from '../lib/codeRef.js'
 import { StatusPill, Confirm, Stars } from '../components/ui.jsx'
@@ -36,6 +39,7 @@ export default function JobDetail({ job, store, onUpdate, onUpdateStore, onDelet
   const [fb, setFb] = useState({ stars: 5, quality: 5, timeliness: 5, communication: 5, cleanliness: 5, concerns: '', improvements: '', testimonial: '', consent: false, customerName: job.customerName || '' })
   const [viewPhoto, setViewPhoto] = useState(null)
   const [newBidLabel, setNewBidLabel] = useState('')
+  const [preview, setPreview] = useState(null)
   const photoInputRef = useRef(null)
   const attachInputRef = useRef(null)
   const [pendingPhotoKind, setPendingPhotoKind] = useState('before')
@@ -115,6 +119,73 @@ export default function JobDetail({ job, store, onUpdate, onUpdateStore, onDelet
   }
   function addMaterial(bidId) {
     upd((d) => { const b = d.bids.find((x) => x.id === bidId); if (b) b.materials = [...(b.materials || []), { id: uid(), name: '', qty: 1, unitCost: 0, taxable: true }] })
+  }
+  // Material price book: fill a material line from a saved price-book entry
+  // (name + unit price + taxable flag) instead of typing it by hand.
+  function addMaterialFromPriceBook(bidId, itemId) {
+    const item = (settings.priceBook || []).find((x) => x.id === itemId)
+    if (!item) { toast('Pick a price-book item first.'); return }
+    upd((d) => {
+      const b = d.bids.find((x) => x.id === bidId)
+      if (!b) return
+      b.materials = [...(b.materials || []), { id: uid(), name: item.name, qty: 1, unitCost: Number(item.unitPrice) || 0, taxable: item.taxable !== false }]
+    })
+    toast(`${item.name} added — adjust the quantity on the line.`)
+  }
+  // Quote expiry nudges: extend, re-quote as a fresh editable draft, or
+  // nudge the customer. Nothing is sent without the carpenter tapping it.
+  function extendQuote(bidId) {
+    const until = new Date(Date.now() + 14 * 86400000).toISOString().slice(0, 10)
+    updateBid(bidId, { validUntil: until })
+    toast(`Quote extended to ${fmtDate(until)}.`)
+  }
+  function requoteBid(bidId) {
+    const src = (job.bids || []).find((b) => b.id === bidId)
+    if (!src) return
+    const validityDays = Number(settings.quoteValidityDays ?? 30) || 0
+    const validUntil = validityDays > 0 ? new Date(Date.now() + validityDays * 86400000).toISOString().slice(0, 10) : ''
+    upd((d) => {
+      const copy = structuredClone(src)
+      copy.id = uid()
+      copy.label = `${src.label} (re-quote)`
+      copy.createdAt = nowISO()
+      copy.validUntil = validUntil
+      d.bids = [...(d.bids || []), copy]
+    })
+    toast('Re-quote created as a new editable bid — adjust the price, then accept it when the customer agrees.')
+  }
+  async function nudgeCustomer(b) {
+    const text = `Hi ${job.customerName || ''}, just checking in on the quote for "${job.title || 'the job'}" — ${money(bidTotal(b))}${b.validUntil ? `, good until ${fmtDate(b.validUntil)}` : ''}. Happy to answer any questions or lock in a start date. — ${settings.businessName || 'AtotheI Carpentry'}`
+    try { toast(await shareText(text, 'Quote follow-up')) } catch (e) { toast(e.message || 'Share failed.') }
+  }
+  // Milestone reminder: drafts the text for one overdue unpaid milestone
+  // and opens the share sheet — the carpenter taps send, nothing auto-sends.
+  async function remindMilestone(m) {
+    const text = `Hi ${job.customerName || ''}, this is ${settings.businessName || 'AtotheI Carpentry'}. A quick reminder — the "${m.label}" payment of ${money(m.amount)} for "${job.title || 'the job'}" was due ${fmtDate(m.due)}. Thanks!`
+    try { toast(await shareText(text, 'Payment reminder')) } catch (e) { toast(e.message || 'Share failed.') }
+  }
+  // Weather check for a scheduled job: free Nominatim geocode + Open-Meteo
+  // forecast for the scheduled date. Result is cached on the job; any
+  // failure shows a plain note instead of an error.
+  const [weatherBusy, setWeatherBusy] = useState(false)
+  async function checkWeather() {
+    if (weatherBusy) return
+    setWeatherBusy(true)
+    try {
+      const res = await checkJobWeather(job)
+      if (!res.ok) {
+        const note = res.reason === 'no-address' ? 'Add a job address to check the weather.'
+          : res.reason === 'no-date' ? 'Add a scheduled date to check the weather.'
+          : res.reason === 'not-found' ? 'Could not find that address on the map — check the spelling.'
+          : 'Could not reach the weather service — check again later.'
+        toast(note)
+        return
+      }
+      upd((d) => { d.weather = res })
+      toast(res.rain ? 'Rain is likely that day — see the warning on the job.' : 'Weather checked — looks dry that day.')
+    } finally {
+      setWeatherBusy(false)
+    }
   }
   function updateMaterial(bidId, matId, patch) {
     upd((d) => {
@@ -237,6 +308,34 @@ export default function JobDetail({ job, store, onUpdate, onUpdateStore, onDelet
       else if (kind === 'lien-waiver') { out = lienWaiverPDF(job, settings) }
       await shareFile(out.filename, out.base64, out.mime, `${settings.businessName || 'AtotheI Carpentry'} — ${job.title}`)
       toast('Shared.')
+    } catch (e) { toast(e.message || 'Share failed.') }
+  }
+
+  // ---- document preview ----
+  // Same content as the matching PDF (same builders, same numbers) — the
+  // user reads it before sending anything. Read-only; editing stays on the tabs.
+  function showPreview(kind) {
+    if (kind === 'quote') {
+      const b = bid || (job.bids || [])[0]
+      if (!b) { toast('Add a bid first — the quote needs line items.'); return }
+      setPreview({ kind, data: quotePreviewData(job, b, settings), shareLabel: 'quote PDF' })
+    } else if (kind === 'contract') {
+      if (!bid) { toast('Accept a bid first — the contract is built from the accepted bid.'); return }
+      setPreview({ kind, data: contractPreviewData(job, settings), shareLabel: 'contract PDF' })
+    } else if (kind === 'timesheet') {
+      setPreview({ kind, data: timesheetPreviewData(job, settings), shareLabel: 'timesheet' })
+    }
+  }
+  async function sharePreview() {
+    if (!preview) return
+    try {
+      if (preview.kind === 'timesheet') {
+        // Timesheets have no PDF — share the same preview as text.
+        toast(await shareText(previewToText(preview.data), `Timesheet — ${job.title || ''}`))
+      } else {
+        await sharePdf(preview.kind)
+      }
+      setPreview(null)
     } catch (e) { toast(e.message || 'Share failed.') }
   }
 
@@ -615,7 +714,7 @@ export default function JobDetail({ job, store, onUpdate, onUpdateStore, onDelet
       )}
 
       {tab === 'overview' && (
-        <OverviewTab job={job} fin={fin} bid={bid} onUpdate={upd} setStatus={setStatus} markLost={markLost} cancelJob={cancelJob} goAi={goAi} settings={settings} toast={toast} regenerateCode={regenerateCode} ensureCode={ensureCode} statusLink={statusLink} feedbackLink={feedbackLink} copyLink={copyLink} shareLink={shareLink} />
+        <OverviewTab job={job} fin={fin} bid={bid} onUpdate={upd} setStatus={setStatus} markLost={markLost} cancelJob={cancelJob} goAi={goAi} settings={settings} toast={toast} regenerateCode={regenerateCode} ensureCode={ensureCode} statusLink={statusLink} feedbackLink={feedbackLink} copyLink={copyLink} shareLink={shareLink} checkWeather={checkWeather} weatherBusy={weatherBusy} />
       )}
 
       {tab === 'bids' && (
@@ -624,7 +723,8 @@ export default function JobDetail({ job, store, onUpdate, onUpdateStore, onDelet
           newBidLabel={newBidLabel} setNewBidLabel={setNewBidLabel}
           addBid={addBid} acceptBid={acceptBid} updateBid={updateBid}
           addMaterial={addMaterial} updateMaterial={updateMaterial} removeMaterial={removeMaterial}
-          deleteBid={deleteBid} makePdf={makePdf} sharePdf={sharePdf}
+          addMaterialFromPriceBook={addMaterialFromPriceBook} extendQuote={extendQuote} requoteBid={requoteBid} nudgeCustomer={nudgeCustomer}
+          deleteBid={deleteBid} makePdf={makePdf} sharePdf={sharePdf} onPreview={() => showPreview('quote')}
           settings={settings} toast={toast} onUpdate={upd}
           assemblies={store.assemblies || []} applyAssemblyToBid={applyAssemblyToBid}
           saveAssemblyFromBid={saveAssemblyFromBid} deleteAssembly={deleteAssembly}
@@ -632,11 +732,11 @@ export default function JobDetail({ job, store, onUpdate, onUpdateStore, onDelet
       )}
 
       {tab === 'money' && (
-        <MoneyTab job={job} fin={fin} bid={bid} addExpense={addExpense} addPayment={addPayment} addTool={addTool} onUpdate={upd} settings={settings} toast={toast} setInvoice={setInvoice} sendInvoiceReminder={sendInvoiceReminder} markInvoicePaid={markInvoicePaid} makePdf={makePdf} sharePdf={sharePdf} applyPaymentTemplate={applyPaymentTemplate} updateMilestone={updateMilestone} addMilestone={addMilestone} removeMilestone={removeMilestone} setBillingType={setBillingType} buildSov={buildSov} rebuildSov={rebuildSov} setSovLine={setSovLine} addSovLine={addSovLine} removeSovLine={removeSovLine} createApplication={createApplication} markApplicationPaid={markApplicationPaid} releaseRetainage={releaseRetainage} makePayAppPdf={makePayAppPdf} sharePayAppPdf={sharePayAppPdf} />
+        <MoneyTab job={job} fin={fin} bid={bid} addExpense={addExpense} addPayment={addPayment} addTool={addTool} onUpdate={upd} settings={settings} toast={toast} setInvoice={setInvoice} sendInvoiceReminder={sendInvoiceReminder} markInvoicePaid={markInvoicePaid} remindMilestone={remindMilestone} makePdf={makePdf} sharePdf={sharePdf} applyPaymentTemplate={applyPaymentTemplate} updateMilestone={updateMilestone} addMilestone={addMilestone} removeMilestone={removeMilestone} setBillingType={setBillingType} buildSov={buildSov} rebuildSov={rebuildSov} setSovLine={setSovLine} addSovLine={addSovLine} removeSovLine={removeSovLine} createApplication={createApplication} markApplicationPaid={markApplicationPaid} releaseRetainage={releaseRetainage} makePayAppPdf={makePayAppPdf} sharePayAppPdf={sharePayAppPdf} />
       )}
 
       {tab === 'time' && (
-        <TimeTab job={job} onUpdate={upd} clockIn={clockIn} clockOut={clockOut} settings={settings} />
+        <TimeTab job={job} onUpdate={upd} clockIn={clockIn} clockOut={clockOut} settings={settings} onPreview={() => showPreview('timesheet')} />
       )}
 
       {tab === 'photos' && (
@@ -655,7 +755,7 @@ export default function JobDetail({ job, store, onUpdate, onUpdateStore, onDelet
       )}
 
       {tab === 'contract' && (
-        <ContractTab job={job} bid={bid} fin={fin} makePdf={makePdf} sharePdf={sharePdf} recordContractAcceptance={recordContractAcceptance} saveChangeOrder={saveChangeOrder} deleteChangeOrder={deleteChangeOrder} signChangeOrder={signChangeOrder} updateHrra={updateHrra} recordHrraAck={recordHrraAck} settings={settings} toast={toast} />
+        <ContractTab job={job} bid={bid} fin={fin} makePdf={makePdf} sharePdf={sharePdf} onPreview={() => showPreview('contract')} recordContractAcceptance={recordContractAcceptance} saveChangeOrder={saveChangeOrder} deleteChangeOrder={deleteChangeOrder} signChangeOrder={signChangeOrder} updateHrra={updateHrra} recordHrraAck={recordHrraAck} settings={settings} toast={toast} />
       )}
 
       {tab === 'closeout' && (
@@ -690,15 +790,73 @@ export default function JobDetail({ job, store, onUpdate, onUpdateStore, onDelet
         </div>
       )}
       {confirm && <Confirm title={confirm.title} body={confirm.body} okLabel={confirm.ok} onOk={() => { const f = confirm.fn; setConfirm(null); f() }} onCancel={() => setConfirm(null)} />}
+      {preview && <PreviewModal doc={preview.data} shareLabel={preview.shareLabel} onClose={() => setPreview(null)} onShare={sharePreview} />}
     </div>
   )
 }
 
 // ---------- tab components ----------
 
-function OverviewTab({ job, fin, bid, onUpdate, setStatus, markLost, cancelJob, goAi, settings, toast, regenerateCode, ensureCode, statusLink, feedbackLink, copyLink, shareLink }) {
+function OverviewTab({ job, fin, bid, onUpdate, setStatus, markLost, cancelJob, goAi, settings, toast, regenerateCode, ensureCode, statusLink, feedbackLink, copyLink, shareLink, checkWeather, weatherBusy }) {
   const [note, setNote] = useState('')
   const [editDesc, setEditDesc] = useState(job.description || '')
+  const [recState, setRecState] = useState('')
+  const [transcribing, setTranscribing] = useState('')
+  const recRef = useRef(null)
+  const chunksRef = useRef([])
+  const hasDeposit = (job.payments || []).some((p) => p.kind === 'deposit')
+  const daysToStart = job.scheduledDate ? Math.round((new Date(job.scheduledDate) - new Date(todayISO())) / 86400000) : null
+  const depositSoon = job.scheduledDate && daysToStart != null && daysToStart <= 7 && !hasDeposit && ['accepted', 'scheduled', 'in-progress'].includes(job.status)
+
+  // Voice notes: record on site with the phone mic, save on the job, play
+  // back in-app. Transcribe with Gemini is optional (your key) — it turns
+  // the recording into a text note too. If transcription fails, the
+  // recording stays and a manual note still works.
+  async function startRecording() {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : ''
+      const rec = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream)
+      chunksRef.current = []
+      rec.ondataavailable = (e) => { if (e.data && e.data.size) chunksRef.current.push(e.data) }
+      rec.onstop = () => {
+        stream.getTracks().forEach((t) => t.stop())
+        const blob = new Blob(chunksRef.current, { type: rec.mimeType || 'audio/webm' })
+        const r = new FileReader()
+        r.onload = () => {
+          onUpdate((d) => { d.voiceNotes = [...(d.voiceNotes || []), { id: uid(), createdAt: nowISO(), dataUrl: String(r.result), mimeType: blob.type, transcript: '' }] })
+          setRecState('')
+        }
+        r.readAsDataURL(blob)
+      }
+      recRef.current = rec
+      rec.start()
+      setRecState('recording')
+    } catch (e) {
+      toast('Could not start recording: ' + (e.message || e))
+    }
+  }
+  function stopRecording() {
+    if (recRef.current && recRef.current.state !== 'inactive') recRef.current.stop()
+  }
+  async function transcribeNote(vn) {
+    if (!settings.geminiApiKey) { toast('Add your Gemini key in Settings to transcribe voice notes.'); return }
+    setTranscribing(vn.id)
+    try {
+      const text = await askGeminiAudio(settings.geminiApiKey, settings.geminiModel, 'Transcribe this voice note word for word. Return only the transcription, no extra text.', vn.dataUrl)
+      const t = text.trim()
+      onUpdate((d) => {
+        const v = (d.voiceNotes || []).find((x) => x.id === vn.id)
+        if (v) v.transcript = t
+        d.notes = [...(d.notes || []), { id: uid(), text: `🎙 Voice note: ${t}`, createdAt: nowISO() }]
+      })
+      toast('Transcribed — added as a text note too.')
+    } catch (e) {
+      toast('Transcription failed: ' + (e.message || e) + ' — the recording is still saved.')
+    } finally {
+      setTranscribing('')
+    }
+  }
   return (
     <div>
       <div className="card">
@@ -721,6 +879,16 @@ function OverviewTab({ job, fin, bid, onUpdate, setStatus, markLost, cancelJob, 
               {JOB_TYPES.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
             </select>
           </div>
+        </div>
+        <hr className="hr" />
+        <h3>Weather for the scheduled day</h3>
+        {job.weather && job.weather.ok && job.weather.date === job.scheduledDate ? (
+          <p style={job.weather.rain ? { color: 'var(--warn)' } : {}}>{job.weather.rain ? '🌧 ' : '☀️ '}{job.weather.summary} <span className="muted">(checked {fmtDateTime(job.weather.checkedAt)})</span></p>
+        ) : (
+          <p className="muted">Free forecast for the scheduled date — needs a job address and a scheduled date. Nothing is sent until you tap it.</p>
+        )}
+        <div className="row wrap">
+          <button className="small" onClick={checkWeather} disabled={weatherBusy}>{weatherBusy ? 'Checking…' : '🌦 Check weather'}</button>
         </div>
       </div>
 
@@ -782,6 +950,9 @@ function OverviewTab({ job, fin, bid, onUpdate, setStatus, markLost, cancelJob, 
         <p>Quoted (accepted bid + change orders): <b className="money">{money(fin.quote)}</b></p>
         <p>Payments in: <b className="money">{money(fin.revenue)}</b> • Balance due: <b className="money">{money(fin.balanceDue)}</b></p>
         <p>Actual costs: <b className="money">{money(fin.totalCosts)}</b> • Profit/loss: <b className={`money ${fin.profit >= 0 ? 'pos' : 'neg'}`}>{money(fin.profit)}</b></p>
+        {depositSoon && (
+          <p style={{ color: 'var(--warn)' }}>⚠️ No deposit recorded yet — this job starts {fmtDate(job.scheduledDate)} ({daysToStart <= 0 ? 'today' : `in ${daysToStart} day${daysToStart === 1 ? '' : 's'}`}). Record the deposit on the Money tab before you load up.</p>
+        )}
         <p className="muted">Full breakdown on the Money tab.</p>
       </div>
 
@@ -795,17 +966,39 @@ function OverviewTab({ job, fin, bid, onUpdate, setStatus, markLost, cancelJob, 
         <div className="row" style={{ marginTop: 8 }}>
           <button className="small primary" onClick={() => { if (!note.trim()) return; onUpdate((d) => { d.notes = [...(d.notes || []), { id: uid(), text: note.trim(), createdAt: nowISO() }] }); setNote('') }}>Add note</button>
         </div>
+        <h3 style={{ marginTop: 16 }}>Voice notes</h3>
+        <p className="muted">Record on site — it saves on the job. Transcribe with Gemini turns it into a text note (needs your key).</p>
+        {(job.voiceNotes || []).map((vn) => (
+          <div key={vn.id} style={{ marginBottom: 10 }}>
+            <audio controls src={vn.dataUrl} style={{ width: '100%' }} />
+            <p className="muted">{fmtDateTime(vn.createdAt)}{vn.transcript ? ` — ${vn.transcript}` : ''}</p>
+            <div className="row wrap">
+              {!vn.transcript && <button className="small" disabled={transcribing === vn.id} onClick={() => transcribeNote(vn)}>{transcribing === vn.id ? 'Transcribing…' : '🎙 Transcribe with Gemini'}</button>}
+              <button className="small" onClick={() => onUpdate((d) => { d.voiceNotes = (d.voiceNotes || []).filter((x) => x.id !== vn.id) })}>Delete</button>
+            </div>
+          </div>
+        ))}
+        {(job.voiceNotes || []).length === 0 && <p className="muted">No voice notes yet.</p>}
+        <div className="row wrap" style={{ marginTop: 8 }}>
+          {recState === 'recording'
+            ? <button className="small danger" onClick={stopRecording}>■ Stop recording</button>
+            : <button className="small dark" onClick={startRecording}>🎙 Record voice note</button>}
+          {recState === 'recording' && <span className="muted">Recording… tap stop when you are done.</span>}
+        </div>
       </div>
     </div>
   )
 }
 
-function BidsTab({ job, showCompare, setShowCompare, newBidLabel, setNewBidLabel, addBid, acceptBid, updateBid, addMaterial, updateMaterial, removeMaterial, deleteBid, makePdf, sharePdf, settings, toast, onUpdate, assemblies, applyAssemblyToBid, saveAssemblyFromBid, deleteAssembly }) {
+function BidsTab({ job, showCompare, setShowCompare, newBidLabel, setNewBidLabel, addBid, acceptBid, updateBid, addMaterial, updateMaterial, removeMaterial, addMaterialFromPriceBook, extendQuote, requoteBid, nudgeCustomer, deleteBid, makePdf, sharePdf, onPreview, settings, toast, onUpdate, assemblies, applyAssemblyToBid, saveAssemblyFromBid, deleteAssembly }) {
   const bids = job.bids || []
   const [analyzing, setAnalyzing] = useState('')
   const [analysisFor, setAnalysisFor] = useState('')
   const [drafting, setDrafting] = useState(false)
   const [draftFor, setDraftFor] = useState('')
+  const [pbId, setPbId] = useState('')
+  const accepted = bids.find((x) => x.id === job.acceptedBidId) || null
+  const checked = job.shoppingChecked || {}
   const [asmId, setAsmId] = useState('')
   const [asmQty, setAsmQty] = useState('')
   const [asmBidId, setAsmBidId] = useState('')
@@ -883,8 +1076,10 @@ function BidsTab({ job, showCompare, setShowCompare, newBidLabel, setNewBidLabel
   }
 
   // Draft a whole bid with Gemini, from the job itself (description,
-  // measurements, notes, labor rate and markup). Same draft-only rule as
-  // photo analysis: the draft lands on a bid for review, nothing is
+  // measurements, notes, labor rate and markup) plus the Gemini chat
+  // history on this job, when there is one — the chat holds corrections,
+  // tenant and phase details the job fields may not. Same draft-only rule
+  // as photo analysis: the draft lands on a bid for review, nothing is
   // accepted or final until the carpenter says so.
   async function draftBidWithGemini() {
     if (!settings.geminiApiKey) {
@@ -893,7 +1088,7 @@ function BidsTab({ job, showCompare, setShowCompare, newBidLabel, setNewBidLabel
     }
     setDrafting(true)
     try {
-      const text = await askGemini(settings.geminiApiKey, settings.geminiModel, [{ role: 'user', text: bidDraftPrompt(job, settings) }])
+      const text = await askGemini(settings.geminiApiKey, settings.geminiModel, [{ role: 'user', text: bidDraftPrompt(job, settings, job.aiHistory || []) }])
       const parsed = extractJson(text)
       // Reuse a still-empty bid if one exists, else create a new one.
       const empty = bids.find((b) => (b.materials || []).length === 0 && !Number(b.laborHours) && !Number(b.other) && (!b.scope || b.scope === (job.description || '')))
@@ -934,7 +1129,7 @@ function BidsTab({ job, showCompare, setShowCompare, newBidLabel, setNewBidLabel
             {drafting ? 'Drafting bid…' : '✨ Draft bid with Gemini'}
           </button>
         </div>
-        <p className="muted">Gemini drafts a full bid from this job — description, measurements, notes, and your labor rate and markup — as editable line items on a new bid. You review every line; nothing is accepted or final.</p>
+        <p className="muted">Gemini drafts a full bid from this job — description, measurements, notes, your labor rate and markup, and the Gemini chat history on this job when there is one — as editable line items on a new bid. You review every line; nothing is accepted or final.</p>
         {bids.length > 1 && (
           <div className="row" style={{ marginTop: 10 }}>
             <button className="small" onClick={() => setShowCompare(!showCompare)}>{showCompare ? 'Hide comparison' : 'Compare bids side by side'}</button>
@@ -959,6 +1154,26 @@ function BidsTab({ job, showCompare, setShowCompare, newBidLabel, setNewBidLabel
           </div>
         )}
       </div>
+      {accepted && (
+        <div className="card">
+          <h2>🛒 Shopping list — from the accepted bid</h2>
+          <p className="muted">Everything the accepted bid needs. Check items off as you buy them — the list and the running total stay on the job.</p>
+          {(accepted.materials || []).map((m) => {
+            const line = (Number(m.qty) || 0) * (Number(m.unitCost) || 0)
+            const done = !!checked[m.id]
+            return (
+              <div key={m.id} className="row between" style={{ padding: '8px 0', borderBottom: '1px solid var(--line)', opacity: done ? 0.55 : 1 }}>
+                <span><input type="checkbox" checked={done} onChange={() => onUpdate((d) => { d.shoppingChecked = { ...(d.shoppingChecked || {}), [m.id]: !done } })} style={{ width: 22, height: 22, minHeight: 22, marginRight: 8, verticalAlign: 'middle' }} /><b style={{ textDecoration: done ? 'line-through' : 'none' }}>{m.name}</b> <span className="muted">× {m.qty} @ {money(m.unitCost)}</span></span>
+                <span className="money">{money(line)}</span>
+              </div>
+            )
+          })}
+          {(accepted.materials || []).length === 0 && <p className="muted">The accepted bid has no material lines yet.</p>}
+          {(accepted.materials || []).length > 0 && (
+            <p style={{ marginTop: 8 }}>All materials: <b className="money">{money(bidMaterialsTotal(accepted))}</b> • Still to buy: <b className="money">{money((accepted.materials || []).filter((m) => !checked[m.id]).reduce((s, m) => s + (Number(m.qty) || 0) * (Number(m.unitCost) || 0), 0))}</b></p>
+          )}
+        </div>
+      )}
       <div className="card">
         <h2>Quote assemblies</h2>
         <p className="muted">Reusable estimating templates — a door install, baseboard per linear foot, a deck per square foot. Applying one fills the bid's line items (quantities × waste factor, labor hours added). Starter costs are typical planning figures — adjust them to your supplier prices.</p>
@@ -1000,7 +1215,7 @@ function BidsTab({ job, showCompare, setShowCompare, newBidLabel, setNewBidLabel
         const attached = b.beforePhotos || []
         const analysis = b.analysis
         return (
-        <div key={b.id} className="card" style={job.acceptedBidId === b.id ? { borderColor: '#15803d', borderWidth: 2 } : {}}>
+        <div key={b.id} className="card" style={job.acceptedBidId === b.id ? { borderColor: 'var(--ok)', borderWidth: 2 } : {}}>
           <div className="row between">
             <input value={b.label} onChange={(e) => updateBid(b.id, { label: e.target.value })} style={{ fontWeight: 700 }} />
             {job.acceptedBidId === b.id ? <span className="pill done">Accepted</span> : <button className="small primary" onClick={() => acceptBid(b.id)}>Accept this bid</button>}
@@ -1029,7 +1244,14 @@ function BidsTab({ job, showCompare, setShowCompare, newBidLabel, setNewBidLabel
             <div><p className="muted">Material prices move between quote and build. After this date the price is no longer held.</p></div>
           </div>
           {b.validUntil && b.validUntil < todayISO() && (
-            <p style={{ color: '#b45309' }}>⚠️ This quote expired {fmtDate(b.validUntil)} — re-quote before the customer signs. The quote PDF shows the expiry date.</p>
+            <p style={{ color: 'var(--warn)' }}>⚠️ This quote expired {fmtDate(b.validUntil)} — re-quote before the customer signs. The quote PDF shows the expiry date.</p>
+          )}
+          {b.validUntil && (
+            <div className="row wrap" style={{ marginTop: 6 }}>
+              <button className="small" onClick={() => extendQuote(b.id)}>Extend quote by 14 days</button>
+              <button className="small" onClick={() => requoteBid(b.id)}>Re-quote as a new draft</button>
+              <button className="small" onClick={() => nudgeCustomer(b)}>💬 Nudge customer</button>
+            </div>
           )}
 
           <h3 style={{ marginTop: 12 }}>Measurements</h3>
@@ -1046,7 +1268,7 @@ function BidsTab({ job, showCompare, setShowCompare, newBidLabel, setNewBidLabel
           {before.length === 0 && <p className="muted">No before photos on this job yet — add them on the Photos &amp; Files tab.</p>}
           <div className="photogrid">
             {before.map((p) => (
-              <div key={p.id} onClick={() => toggleBidPhoto(b.id, p.id)} style={{ cursor: 'pointer', border: attached.includes(p.id) ? '3px solid #15803d' : '3px solid transparent', borderRadius: 10 }}>
+              <div key={p.id} onClick={() => toggleBidPhoto(b.id, p.id)} style={{ cursor: 'pointer', border: attached.includes(p.id) ? '3px solid var(--ok)' : '3px solid transparent', borderRadius: 10 }}>
                 <img className="thumb" src={p.dataUrl} alt="before" />
                 <div className="muted" style={{ textAlign: 'center' }}>{attached.includes(p.id) ? '✓ Attached to this bid' : 'Tap to attach'}</div>
               </div>
@@ -1123,6 +1345,14 @@ function BidsTab({ job, showCompare, setShowCompare, newBidLabel, setNewBidLabel
             </div>
           ))}
           <button className="small" onClick={() => addMaterial(b.id)}>+ Add material</button>
+          <div className="row wrap" style={{ marginTop: 8 }}>
+            <select value={pbId} onChange={(e) => setPbId(e.target.value)} style={{ flex: 2 }}>
+              <option value="">From price book…</option>
+              {(settings.priceBook || []).map((p) => <option key={p.id} value={p.id}>{p.name}{p.unitPrice !== '' && p.unitPrice != null ? ` — ${money(p.unitPrice)}` : ''}</option>)}
+            </select>
+            <button className="small" onClick={() => { if (!pbId) { toast('Pick a price-book item first (set them up in Settings).'); return } addMaterialFromPriceBook(b.id, pbId) }}>Add from price book</button>
+          </div>
+          <p className="muted">The price book lives in Settings — your usual materials and prices, filled in by you.</p>
 
           <h3 style={{ marginTop: 12 }}>Labor &amp; markup</h3>
           <div className="grid2">
@@ -1135,10 +1365,11 @@ function BidsTab({ job, showCompare, setShowCompare, newBidLabel, setNewBidLabel
           <p className="muted">Labor: {money(effectiveLabor(b))}{Number(b.laborHours) > 0 ? ` (${b.laborHours}h × ${money(b.laborRate)})` : ' (flat amount — enter hours × rate to use the builder)'} • Overhead covers measuring, buying material, admin, insurance, and the van. Markup default is {Number(settings.defaultMarkupPct ?? 20)}% from Settings.</p>
           <p style={{ marginTop: 10 }}>Materials {money(bidMaterialsTotal(b))} + labor {money(effectiveLabor(b))} + other {money(b.other)} = {money(bidSubtotal(b))}{Number(b.overheadPct) > 0 ? ` + overhead ${Number(b.overheadPct)}% (${money(bidOverhead(b))})` : ''}{Number(b.markupPct) > 0 ? ` + markup ${Number(b.markupPct)}% (${money(bidTotal(b) - bidSubtotal(b) - bidOverhead(b))})` : ''} = <b className="money">{money(bidTotal(b))}</b></p>
           {Number(settings.minDayRate) > 0 && bidTotal(b) > 0 && bidTotal(b) < Number(settings.minDayRate) && (
-            <p style={{ color: '#b45309' }}>⚠️ Below your minimum day rate of {money(settings.minDayRate)} — setting up saws, dust extraction, and a bench costs the same hour whether the job is one door or ten.</p>
+            <p style={{ color: 'var(--warn)' }}>⚠️ Below your minimum day rate of {money(settings.minDayRate)} — setting up saws, dust extraction, and a bench costs the same hour whether the job is one door or ten.</p>
           )}
           <p className="muted">Sales tax ({salesTaxRate(settings).toFixed(2)}% on taxable materials {money(bidTaxableMaterials(b))}): {money(bidTax(b, settings))} — total with tax <b className="money">{money(bidTotalWithTax(b, settings))}</b>. Materials are taxable; installation labor is not. The rate is your Illinois 6.25% state base + the local rate from Settings.</p>
           <div className="row wrap">
+            <button className="small" onClick={onPreview}>👁 Preview quote</button>
             <button className="small" onClick={() => makePdf('quote')}>Quote PDF</button>
             <button className="small" onClick={() => sharePdf('quote')}>Share quote</button>
             <button className="small danger" onClick={() => deleteBid(b.id)}>Delete bid</button>
@@ -1151,7 +1382,7 @@ function BidsTab({ job, showCompare, setShowCompare, newBidLabel, setNewBidLabel
   )
 }
 
-function MoneyTab({ job, fin, bid, addExpense, addPayment, addTool, onUpdate, settings, toast, setInvoice, sendInvoiceReminder, markInvoicePaid, makePdf, sharePdf, applyPaymentTemplate, updateMilestone, addMilestone, removeMilestone, setBillingType, buildSov, rebuildSov, setSovLine, addSovLine, removeSovLine, createApplication, markApplicationPaid, releaseRetainage, makePayAppPdf, sharePayAppPdf }) {
+function MoneyTab({ job, fin, bid, addExpense, addPayment, addTool, onUpdate, settings, toast, setInvoice, sendInvoiceReminder, markInvoicePaid, remindMilestone, makePdf, sharePdf, applyPaymentTemplate, updateMilestone, addMilestone, removeMilestone, setBillingType, buildSov, rebuildSov, setSovLine, addSovLine, removeSovLine, createApplication, markApplicationPaid, releaseRetainage, makePayAppPdf, sharePayAppPdf }) {
   const [exLabel, setExLabel] = useState('')
   const [exCat, setExCat] = useState('materials')
   const [exAmt, setExAmt] = useState('')
@@ -1310,6 +1541,7 @@ function MoneyTab({ job, fin, bid, addExpense, addPayment, addTool, onUpdate, se
             <div className="row between" style={{ marginTop: 4 }}>
               <span className="muted">{m.due || '—'}</span>
               <span className="row">
+                {m.due && m.due < todayISO() && !m.paid && <button className="small" onClick={() => remindMilestone(m)}>💬 Remind</button>}
                 <button className={`small ${m.paid ? 'dark' : ''}`} onClick={() => updateMilestone(m.id, { paid: !m.paid })}>{m.paid ? '✓ Paid' : 'Mark paid'}</button>
                 <button className="small" onClick={() => removeMilestone(m.id)}>✕</button>
               </span>
@@ -1340,10 +1572,13 @@ function MoneyTab({ job, fin, bid, addExpense, addPayment, addTool, onUpdate, se
           <div><label>Due date</label><input type="date" value={inv.dueDate || ''} onChange={(e) => setInvoice({ dueDate: e.target.value })} /></div>
         </div>
         <p>Balance due: <b className="money">{money(fin.balanceDue)}</b>{inv.sentAt ? <span className="muted"> • sent {fmtDate(inv.sentAt)}</span> : ''}{inv.paidAt ? <span className="muted"> • paid {fmtDate(inv.paidAt)}</span> : ''}</p>
+        {invState === 'overdue' && (
+          <p style={{ color: 'var(--err)' }}>⛔ This invoice is overdue — balance due {money(fin.balanceDue)}{inv.dueDate ? ` (was due ${fmtDate(inv.dueDate)})` : ''}. Tap Remind customer to draft the text; nothing is sent until you tap send.</p>
+        )}
         <div className="row wrap">
           <button className="small primary" onClick={() => makePdf('invoice')}>Invoice PDF</button>
           <button className="small" onClick={() => sharePdf('invoice')}>Share invoice</button>
-          {invState !== 'paid' && fin.balanceDue > 0 && <button className="small" onClick={sendInvoiceReminder}>Send payment reminder (text)</button>}
+          {invState !== 'paid' && fin.balanceDue > 0 && <button className="small" onClick={sendInvoiceReminder}>💬 Remind customer</button>}
           {invState !== 'paid' && <button className="small" onClick={markInvoicePaid}>Mark paid</button>}
         </div>
       </div>
@@ -1497,13 +1732,20 @@ function PhotosTab({ job, addPhoto, deletePhoto, setViewPhoto, onAttachFile, dow
   )
 }
 
-function TimeTab({ job, onUpdate, clockIn, clockOut, settings }) {
+function TimeTab({ job, onUpdate, clockIn, clockOut, settings, onPreview }) {
   const [worker, setWorker] = useState('Jeramy')
   const open = openTimeEntry(job)
   const totals = jobTimeTotals(job, settings.defaultLaborRate)
   const entries = (job.timeEntries || []).slice().reverse()
   const bid = acceptedBid(job)
   const hc = hoursComparison(job, settings.defaultLaborRate)
+  const [hName, setHName] = useState('')
+  const [hHours, setHHours] = useState('')
+  const [hRate, setHRate] = useState('')
+  const [hDate, setHDate] = useState(todayISO())
+  const helpers = job.helperHours || []
+  const helperHrs = helpers.reduce((s, h) => s + (Number(h.hours) || 0), 0)
+  const helperPay = helpers.reduce((s, h) => s + (Number(h.hours) || 0) * (Number(h.rate) || 0), 0)
   return (
     <div>
       <div className="card">
@@ -1534,8 +1776,30 @@ function TimeTab({ job, onUpdate, clockIn, clockOut, settings }) {
         )}
       </div>
       <div className="card">
+        <h2>Helper hours</h2>
+        <p className="muted">Log a helper's hours here — helper pay feeds the job's actual costs and P&amp;L automatically. Separate from your own clocked hours above.</p>
+        <p>Total: <b>{fmtHours(helperHrs)}</b> • Helper pay: <b className="money">{money(helperPay)}</b></p>
+        {helpers.map((h) => (
+          <div key={h.id} className="row between" style={{ padding: '6px 0', borderBottom: '1px solid var(--line)' }}>
+            <span><b>{h.name}</b> — {fmtDate(h.date)} • {fmtHours(h.hours)} × {money(h.rate)} = {money((Number(h.hours) || 0) * (Number(h.rate) || 0))}</span>
+            <button className="small" onClick={() => onUpdate((d) => { d.helperHours = (d.helperHours || []).filter((x) => x.id !== h.id) })}>✕</button>
+          </div>
+        ))}
+        {helpers.length === 0 && <p className="muted">No helper hours logged yet.</p>}
+        <div className="grid2" style={{ marginTop: 8 }}>
+          <div><label>Name</label><input value={hName} onChange={(e) => setHName(e.target.value)} placeholder="Helper name" /></div>
+          <div><label>Date</label><input type="date" value={hDate} onChange={(e) => setHDate(e.target.value)} /></div>
+          <div><label>Hours</label><input type="number" value={hHours} onChange={(e) => setHHours(e.target.value)} placeholder="e.g. 4" inputMode="decimal" /></div>
+          <div><label>Rate ($/hr)</label><input type="number" value={hRate} onChange={(e) => setHRate(e.target.value)} placeholder="e.g. 25" inputMode="decimal" /></div>
+        </div>
+        <button className="small primary" style={{ marginTop: 8 }} onClick={() => { if (!hName.trim() || !(Number(hHours) > 0)) { return } onUpdate((d) => { d.helperHours = [...(d.helperHours || []), { id: uid(), name: hName.trim(), hours: Number(hHours), rate: Number(hRate) || 0, date: hDate || todayISO(), createdAt: nowISO() }] }); setHName(''); setHHours(''); setHRate('') }}>+ Log helper hours</button>
+      </div>
+      <div className="card">
         <h2>Hours on this job</h2>
         <p>Total: <b>{fmtHours(totals.hours)}</b> • Labor cost from time: <b className="money">{money(totals.labor)}</b></p>
+        <div className="row wrap" style={{ marginBottom: 8 }}>
+          <button className="small" onClick={onPreview}>👁 Preview timesheet</button>
+        </div>
         {Object.keys(totals.byWorker).length > 0 && Object.keys(totals.byWorker).map((w) => (
           <p key={w}>{w}: {fmtHours(totals.byWorker[w])}</p>
         ))}
@@ -1815,7 +2079,7 @@ function CodeTab({ job, onUpdate, toggleChecklist, rebuildChecklist }) {
   )
 }
 
-function ContractTab({ job, bid, fin, makePdf, sharePdf, recordContractAcceptance, saveChangeOrder, deleteChangeOrder, signChangeOrder, updateHrra, recordHrraAck, settings, toast }) {
+function ContractTab({ job, bid, fin, makePdf, sharePdf, onPreview, recordContractAcceptance, saveChangeOrder, deleteChangeOrder, signChangeOrder, updateHrra, recordHrraAck, settings, toast }) {
   const c = job.contract || { changeOrders: [] }
   const hrra = job.hrra || { pamphletAck: {}, arbitration: {}, juryWaiver: {}, estimatedCompletionDate: '' }
   const hrraAmountValue = hrraAmount(job, bidTotal)
@@ -1860,8 +2124,8 @@ function ContractTab({ job, bid, fin, makePdf, sharePdf, recordContractAcceptanc
         <h2>Illinois HRRA — Home Repair and Remodeling Act</h2>
         <p className="muted">For residential jobs over $1,000, Illinois law requires a written contract and the Illinois Attorney General's pamphlet "{HRRA_PAMPHLET_NAME}". Jobs $1,000 and under skip this gate.</p>
         <p>Job amount: <b className="money">{money(hrraAmountValue)}</b> — {hrraOn ? <b>HRRA applies (over $1,000)</b> : 'under $1,000 — the HRRA acknowledgment is not required for this job.'}</p>
-        {hrraOn && !acked && <p style={{ color: '#b91c1c' }}>⛔ This job cannot move to Scheduled or In Progress until the customer acknowledges the pamphlet below. That is a hard gate, like the code checklist.</p>}
-        {hrraOn && acked && <p style={{ color: '#15803d' }}>✓ Pamphlet acknowledged by {hrra.pamphletAck.signedBy} on {fmtDate(hrra.pamphletAck.signedAt)} — the HRRA gate is open.</p>}
+        {hrraOn && !acked && <p style={{ color: 'var(--err)' }}>⛔ This job cannot move to Scheduled or In Progress until the customer acknowledges the pamphlet below. That is a hard gate, like the code checklist.</p>}
+        {hrraOn && acked && <p style={{ color: 'var(--ok)' }}>✓ Pamphlet acknowledged by {hrra.pamphletAck.signedBy} on {fmtDate(hrra.pamphletAck.signedAt)} — the HRRA gate is open.</p>}
         <h3 style={{ marginTop: 10 }}>What the pamphlet covers</h3>
         <ul className="muted">
           {HRRA_PAMPHLET_SUMMARY.map((s, i) => <li key={i}>{s}</li>)}
@@ -1906,7 +2170,7 @@ function ContractTab({ job, bid, fin, makePdf, sharePdf, recordContractAcceptanc
         </div>
         {settings.businessAddress
           ? <p className="muted">Business address on the contract: {settings.businessAddress}</p>
-          : <p style={{ color: '#b45309' }}>⚠️ Add your physical business address in Settings — HRRA requires it on the contract, and it must not be a P.O. Box.</p>}
+          : <p style={{ color: 'var(--warn)' }}>⚠️ Add your physical business address in Settings — HRRA requires it on the contract, and it must not be a P.O. Box.</p>}
       </div>
       <div className="card">
         <h2>Contract</h2>
@@ -1920,6 +2184,7 @@ function ContractTab({ job, bid, fin, makePdf, sharePdf, recordContractAcceptanc
           <p>Finish: <b>{FINISH_GRADES.find((g) => g.id === bid.finishGrade)?.label || 'Not specified'}</b> • Finishing by: <b>{FINISHING_BY.find((g) => g.id === bid.finishingBy)?.label || 'Not specified'}</b> — these are written into the contract.</p>
         )}
         <div className="row wrap">
+          <button className="small" onClick={onPreview}>👁 Preview contract</button>
           <button className="small primary" onClick={() => makePdf('contract')}>Contract PDF</button>
           <button className="small" onClick={() => sharePdf('contract')}>Share contract</button>
           <button className="small" onClick={recordContractAcceptance}>Record customer acceptance</button>

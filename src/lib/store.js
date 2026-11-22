@@ -248,6 +248,14 @@ export function newJob(takenCodes) {
     // measurements are the overall site measurements for reference.
     measurements: { lengthFt: '', widthFt: '', heightFt: '', sqFt: '', linearFt: '' },
     timeEntries: [],
+    // Helper hours (Time tab): { id, name, hours, rate, date, createdAt }.
+    // Voice notes (Overview Notes): { id, createdAt, dataUrl, mimeType, transcript }.
+    // Shopping list check-off (Bids tab): { materialId: true }.
+    // Cached weather check (Overview): { checkedAt, date, address, precipProb, precipSum, rain, summary }.
+    helperHours: [],
+    voiceNotes: [],
+    shoppingChecked: {},
+    weather: null,
     invoice: { state: 'unsent', dueDate: '', sentAt: '', paidAt: '' },
     lienWaiver: { generatedAt: '', finalPayment: 0, signedAt: '', signedBy: '' },
     punchList: [],
@@ -347,6 +355,25 @@ export function paymentPlanAmounts(job) {
     ...m,
     amount: Math.round(quote * ((Number(m.pct) || 0) / 100) * 100) / 100,
   }))
+}
+
+// ---- Material price book ----
+// Your usual materials and prices, picked from a list when adding a line
+// to a bid. Seeded with common item NAMES only — prices are blank on
+// purpose. No prices are invented here; fill in your supplier prices.
+export function defaultPriceBook() {
+  const names = [
+    'Drywall 1/2" 4x8 sheet',
+    '2x4x8 stud',
+    'Joint compound (bucket)',
+    'Drywall screws (box)',
+    'Paint — interior gallon',
+    'Primer — gallon',
+    'Trim — baseboard / casing',
+    'Caulk (tube)',
+    'Insulation batt',
+  ]
+  return names.map((name, i) => ({ id: 'pb-' + (i + 1), name, unitPrice: '', taxable: true }))
 }
 
 // ---- Quote assemblies (reusable estimating templates) ----
@@ -554,13 +581,18 @@ export function jobActuals(job, defaultRate) {
   const other = ex.filter((e) => e.category === 'other').reduce((s, e) => s + (Number(e.amount) || 0), 0)
   const toolRentals = (job.tools || []).filter((t) => !t.owned).reduce((s, t) => s + (Number(t.rentalCost) || 0), 0)
   const time = jobTimeTotals(job, defaultRate)
-  const labor = laborManual + time.labor
+  // Helper hours: logged on the Time tab (name, hours, rate, date). Helper
+  // pay is a real labor cost — it feeds the job's actual costs and P&L.
+  const helperHoursHrs = (job.helperHours || []).reduce((s, h) => s + (Number(h.hours) || 0), 0)
+  const helperHours = (job.helperHours || []).reduce((s, h) => s + (Number(h.hours) || 0) * (Number(h.rate) || 0), 0)
+  const labor = laborManual + time.labor + helperHours
   const changeOrders = (job.contract?.changeOrders || []).reduce((s, c) => s + (Number(c.price) || 0), 0)
   const totalCosts = materials + labor + other + toolRentals
   const revenue = (job.payments || []).reduce((s, p) => s + (Number(p.amount) || 0), 0)
   const quote = quotedAmount(job) + changeOrders
   return {
     materials, labor, laborManual, timeHours: time.hours, timeLabor: time.labor,
+    helperHours, helperHoursHrs,
     other, toolRentals, changeOrders,
     totalCosts, revenue, quote,
     profit: revenue - totalCosts,
@@ -584,6 +616,69 @@ export function overdueInvoices(store) {
     if (invoiceState(j) === 'overdue') out.push({ job: j, inv: j.invoice || {} })
   }
   return out
+}
+
+// Jobs starting within 7 days with no deposit payment recorded. A deposit
+// is a payment whose kind is 'deposit' (the Money tab records it that way).
+export function depositDueJobs(store) {
+  const today = todayISO()
+  const out = []
+  for (const j of store.jobs || []) {
+    if (!j.scheduledDate || ['done', 'cancelled', 'lost'].includes(j.status)) continue
+    const daysUntil = Math.round((new Date(j.scheduledDate) - new Date(today)) / 86400000)
+    if (daysUntil > 7) continue
+    const hasDeposit = (j.payments || []).some((p) => p.kind === 'deposit')
+    if (!hasDeposit) out.push({ job: j, daysUntil })
+  }
+  return out
+}
+
+// Quotes (unaccepted bids) whose valid-until date is within `days` days —
+// negative daysLeft means already expired. Accepted bids are not quotes
+// waiting for an answer, so they are skipped.
+export function expiringQuotes(store, days) {
+  const today = todayISO()
+  const out = []
+  for (const j of store.jobs || []) {
+    if (!['bid', 'enquiry'].includes(j.status)) continue
+    for (const b of j.bids || []) {
+      if (!b.validUntil || j.acceptedBidId === b.id) continue
+      const daysLeft = Math.round((new Date(b.validUntil) - new Date(today)) / 86400000)
+      if (daysLeft <= days) out.push({ job: j, bid: b, daysLeft })
+    }
+  }
+  return out
+}
+
+// End-of-day summary: what happened today (hours logged, money in, jobs
+// due, overdue items) plus yesterday's hours and money for comparison.
+// Computed from the store when Home opens — a card, not a notification.
+export function todaySummary(store) {
+  const today = todayISO()
+  const y = new Date()
+  y.setDate(y.getDate() - 1)
+  const yesterday = y.toISOString().slice(0, 10)
+  let hoursToday = 0, hoursYesterday = 0, moneyInToday = 0, moneyInYesterday = 0
+  for (const j of store.jobs || []) {
+    for (const e of j.timeEntries || []) {
+      const d = String(e.clockIn || '').slice(0, 10)
+      if (d === today) hoursToday += timeEntryHours(e)
+      else if (d === yesterday) hoursYesterday += timeEntryHours(e)
+    }
+    for (const h of j.helperHours || []) {
+      if (h.date === today) hoursToday += Number(h.hours) || 0
+      else if (h.date === yesterday) hoursYesterday += Number(h.hours) || 0
+    }
+    for (const p of j.payments || []) {
+      if (p.date === today) moneyInToday += Number(p.amount) || 0
+      else if (p.date === yesterday) moneyInYesterday += Number(p.amount) || 0
+    }
+  }
+  const dueToday = (store.jobs || []).filter((j) => j.scheduledDate === today && !['done', 'cancelled', 'lost'].includes(j.status))
+  const overdueCount = overdueInvoices(store).length
+    + (store.jobs || []).flatMap((j) => (j.followUps || []).filter((f) => !f.done && f.dueDate && f.dueDate < today)).length
+    + expiringQuotes(store, 0).filter((x) => x.daysLeft < 0).length
+  return { hoursToday, hoursYesterday, moneyInToday, moneyInYesterday, dueToday, overdueCount }
 }
 
 // ---- Progress billing (AIA-style, G702/G703 pattern) ----
@@ -983,6 +1078,13 @@ export function defaultStore() {
       municipalLicenses: [],
       geminiApiKey: '',
       geminiModel: 'gemini-3.8-flash',
+      // Material price book: your usual materials and prices. Names are
+      // seeded; prices are blank on purpose — fill in your supplier prices.
+      // Used by the "Add from price book" picker on a bid.
+      priceBook: defaultPriceBook(),
+      // Appearance: 'dark' is the default — the app was nearly all white.
+      // Light keeps the bright look with orange accents. Toggled in Settings.
+      theme: 'dark',
       defaultLaborRate: 65,
       // Pricing defaults — new bids start with these. Markup default is
       // 20%, inside the usual 15–30% range for materials.

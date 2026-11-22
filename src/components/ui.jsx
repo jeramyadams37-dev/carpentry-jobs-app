@@ -28,7 +28,7 @@ export function Stars({ value, onChange }) {
           key={n}
           type="button"
           className="small"
-          style={{ fontSize: 22, minWidth: 48, background: n <= value ? '#fde68a' : '#fff', borderColor: '#f59e0b' }}
+          style={{ fontSize: 22, minWidth: 48, background: n <= value ? 'var(--amber-bg)' : 'var(--card)', borderColor: '#f59e0b' }}
           onClick={() => onChange && onChange(n)}
           aria-label={`${n} star${n > 1 ? 's' : ''}`}
         >
