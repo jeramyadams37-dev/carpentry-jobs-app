@@ -7,9 +7,24 @@ export function uid() {
   return Math.random().toString(36).slice(2, 10) + Date.now().toString(36)
 }
 
+// Local calendar date as YYYY-MM-DD. toISOString() is UTC — at 7pm CST it
+// already reads as tomorrow, so document dates and valid-until dates were
+// stamped a day ahead. Every date the customer sees goes through this.
+export function dateToISO(d) {
+  const p = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
+}
+
 export function todayISO() {
+  return dateToISO(new Date())
+}
+
+// Local calendar date N days from today. Calendar days (setDate), not
+// 24-hour blocks, so DST changes cannot shift the date.
+export function daysFromTodayISO(days) {
   const d = new Date()
-  return d.toISOString().slice(0, 10)
+  d.setDate(d.getDate() + (Number(days) || 0))
+  return dateToISO(d)
 }
 
 export function nowISO() {
@@ -349,12 +364,21 @@ export function defaultPaymentPlan() {
   return paymentPlanFromTemplate('50-40-10')
 }
 
-export function paymentPlanAmounts(job) {
-  const quote = quotedAmount(job)
-  return (job.paymentPlan || []).map((m) => ({
+// Milestone amounts for a base total: same base (pre-tax quote total) and
+// same cent rounding as paymentPlanAmounts, so the quote, invoice, and
+// contract always agree. A milestone that already carries a fixed dollar
+// amount keeps it (custom installments); otherwise the amount is computed
+// from its percentage of the total.
+export function paymentPlanAmountsFor(total, plan) {
+  const base = Number(total) || 0
+  return (plan || []).map((m) => ({
     ...m,
-    amount: Math.round(quote * ((Number(m.pct) || 0) / 100) * 100) / 100,
+    amount: Number(m.amount) > 0 ? Number(m.amount) : Math.round(base * ((Number(m.pct) || 0) / 100) * 100) / 100,
   }))
+}
+
+export function paymentPlanAmounts(job) {
+  return paymentPlanAmountsFor(quotedAmount(job), job.paymentPlan)
 }
 
 // ---- Material price book ----

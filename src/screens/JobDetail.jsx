@@ -2,7 +2,7 @@ import React, { useRef, useState } from 'react'
 import { Camera, CameraResultType, CameraSource } from '@capacitor/camera'
 import { Geolocation } from '@capacitor/geolocation'
 import {
-  money, fmtDate, fmtDateTime, todayISO, nowISO, uid, bidTotal, bidSubtotal, bidMaterialsTotal,
+  money, fmtDate, fmtDateTime, todayISO, daysFromTodayISO, nowISO, uid, bidTotal, bidSubtotal, bidMaterialsTotal,
   bidOverhead, effectiveLabor, acceptedBid, jobActuals, jobCodeChecklistDone, punchListDone,
   invoiceState, jobLaborRate, jobTimeTotals, openTimeEntry, timeEntryHours, fmtHours,
   warrantyExpiry, addMonthsISO, genJobCode, STATUS_LABELS, JOB_TYPES, CUSTOMER_TYPES,
@@ -97,7 +97,7 @@ export default function JobDetail({ job, store, onUpdate, onUpdateStore, onDelet
     // markup, overhead) and a valid-until date from the validity setting.
     const validityDays = Number(settings.quoteValidityDays ?? 30) || 0
     const validUntil = validityDays > 0
-      ? new Date(Date.now() + validityDays * 86400000).toISOString().slice(0, 10)
+      ? daysFromTodayISO(validityDays)
       : ''
     upd((d) => {
       const b = { id: uid(), label: newBidLabel.trim() || `Bid ${(d.bids || []).length + 1}`, scope: d.description || '', materials: [], labor: 0, other: 0, createdAt: nowISO(), laborRate: Number(settings.defaultLaborRate) || 0, markupPct: Number(settings.defaultMarkupPct ?? 20) || 0, overheadPct: Number(settings.defaultOverheadPct) || 0, validUntil }
@@ -135,7 +135,7 @@ export default function JobDetail({ job, store, onUpdate, onUpdateStore, onDelet
   // Quote expiry nudges: extend, re-quote as a fresh editable draft, or
   // nudge the customer. Nothing is sent without the carpenter tapping it.
   function extendQuote(bidId) {
-    const until = new Date(Date.now() + 14 * 86400000).toISOString().slice(0, 10)
+    const until = daysFromTodayISO(14)
     updateBid(bidId, { validUntil: until })
     toast(`Quote extended to ${fmtDate(until)}.`)
   }
@@ -143,7 +143,7 @@ export default function JobDetail({ job, store, onUpdate, onUpdateStore, onDelet
     const src = (job.bids || []).find((b) => b.id === bidId)
     if (!src) return
     const validityDays = Number(settings.quoteValidityDays ?? 30) || 0
-    const validUntil = validityDays > 0 ? new Date(Date.now() + validityDays * 86400000).toISOString().slice(0, 10) : ''
+    const validUntil = validityDays > 0 ? daysFromTodayISO(validityDays) : ''
     upd((d) => {
       const copy = structuredClone(src)
       copy.id = uid()
@@ -1098,7 +1098,7 @@ function BidsTab({ job, showCompare, setShowCompare, newBidLabel, setNewBidLabel
       } else {
         bidId = uid()
         const validityDays = Number(settings.quoteValidityDays ?? 30) || 0
-        const validUntil = validityDays > 0 ? new Date(Date.now() + validityDays * 86400000).toISOString().slice(0, 10) : ''
+        const validUntil = validityDays > 0 ? daysFromTodayISO(validityDays) : ''
         const label = `Bid ${bids.length + 1} (Gemini draft)`
         onUpdate((d) => {
           const b = { id: bidId, label, scope: d.description || '', materials: [], labor: 0, other: 0, createdAt: nowISO(), laborRate: Number(settings.defaultLaborRate) || 0, markupPct: Number(settings.defaultMarkupPct ?? 20) || 0, overheadPct: Number(settings.defaultOverheadPct) || 0, validUntil }

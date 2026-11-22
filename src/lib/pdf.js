@@ -2,7 +2,7 @@
 // generated on the phone, saved to Downloads, opened in the PDF viewer.
 // Filenames: <job-slug>_<type>_<YYYY-MM-DD>_<HHMM>.pdf
 import { jsPDF } from 'jspdf'
-import { money, fmtDate, bidTotal, bidMaterialsTotal, bidOverhead, effectiveLabor, acceptedBid, jobActuals, slugify, fileStamp, FINISH_GRADES, FINISHING_BY, defaultPaymentPlan, paymentPlanAmounts, businessProgress, progressSummary, salesTaxRate, bidTax, bidTaxableMaterials } from './store.js'
+import { money, fmtDate, todayISO, bidTotal, bidMaterialsTotal, bidOverhead, effectiveLabor, acceptedBid, jobActuals, slugify, fileStamp, FINISH_GRADES, FINISHING_BY, defaultPaymentPlan, paymentPlanAmounts, paymentPlanAmountsFor, businessProgress, progressSummary, salesTaxRate, bidTax, bidTaxableMaterials } from './store.js'
 import { PLAN_SECTIONS } from './planContent.js'
 import { HRRA_THRESHOLD, HRRA_PAMPHLET_NAME, HRRA_PAMPHLET_SUMMARY, hrraAmount } from './hrra.js'
 
@@ -125,7 +125,7 @@ export function quotePDF(job, bid, settings) {
   y = kv(doc, y, 'Phone:', job.phone || '—')
   y = kv(doc, y, 'Address:', job.address || '—')
   y = kv(doc, y, 'Job:', job.title || '—')
-  y = kv(doc, y, 'Date:', fmtDate(new Date().toISOString().slice(0, 10)))
+  y = kv(doc, y, 'Date:', fmtDate(todayISO()))
   y = kv(doc, y, 'Valid until:', bid.validUntil ? fmtDate(bid.validUntil) : '—')
   y = licenseKv(doc, y, settings)
   y += 4
@@ -135,9 +135,18 @@ export function quotePDF(job, bid, settings) {
   doc.setFontSize(11)
   doc.text(scopeLines, MARGIN, y)
   y += scopeLines.length * 6 + 2
-  const finishGrade = FINISH_GRADES.find((g) => g.id === bid.finishGrade)?.label || 'Not specified'
-  const finishingBy = FINISHING_BY.find((g) => g.id === bid.finishingBy)?.label || 'Not specified'
-  y = kv(doc, y, 'Finish:', `${finishGrade} — finishing by ${finishingBy}`)
+  // Finish line: only when a finish detail is actually set — never print
+  // a "Not specified" placeholder on a customer-facing quote.
+  const finishParts = []
+  if (bid.finishGrade) {
+    const fg = FINISH_GRADES.find((g) => g.id === bid.finishGrade)?.label
+    if (fg) finishParts.push(fg)
+  }
+  if (bid.finishingBy) {
+    const fb = FINISHING_BY.find((g) => g.id === bid.finishingBy)?.label
+    if (fb) finishParts.push(`finishing by ${fb}`)
+  }
+  if (finishParts.length) y = kv(doc, y, 'Finish:', finishParts.join(' — '))
   y += 4
   y = section(doc, y, 'Line items')
   const rows = (bid.materials || []).map((m) => [
@@ -154,6 +163,27 @@ export function quotePDF(job, bid, settings) {
   y = totalLine(doc, y, `Sales tax (${salesTaxRate(settings).toFixed(2)}% on taxable materials ${money(bidTaxableMaterials(bid))})`, bidTax(bid, settings))
   y = totalLine(doc, y, 'TOTAL WITH TAX', bidTotal(bid) + bidTax(bid, settings))
   y += 4
+  // Payment schedule: the job's configured milestones, or the default
+  // 50/40/10 split when none is configured yet (a quote is written before
+  // the bid is accepted, so the plan may not exist). Amounts are computed
+  // from this bid's total with the same base and rounding as the invoice,
+  // so the quote and the invoice agree. Progress-billed jobs have no
+  // milestone schedule — the section is omitted, never printed empty.
+  if (job.billingType !== 'progress') {
+    const plan = paymentPlanAmountsFor(bidTotal(bid), (job.paymentPlan && job.paymentPlan.length ? job.paymentPlan : defaultPaymentPlan()))
+    if (plan.length > 0) {
+      y = ensure(doc, y, 30)
+      y = section(doc, y, 'Payment schedule')
+      for (const m of plan) {
+        y = ensure(doc, y, 8)
+        doc.setFont('helvetica', 'normal')
+        doc.setFontSize(11)
+        doc.text(`• ${m.label} (${Number(m.pct) || 0}%) — ${money(m.amount)}`, MARGIN, y)
+        y += 7
+      }
+      y += 4
+    }
+  }
   doc.setFont('helvetica', 'normal')
   doc.setFontSize(10)
   const validText = bid.validUntil ? `This quote is valid until ${fmtDate(bid.validUntil)}.` : 'This quote is valid for 30 days from the date above.'
@@ -176,7 +206,7 @@ export function invoicePDF(job, settings) {
   y = kv(doc, y, 'Phone:', job.phone || '—')
   y = kv(doc, y, 'Address:', job.address || '—')
   y = kv(doc, y, 'Job:', job.title || '—')
-  y = kv(doc, y, 'Date:', fmtDate(new Date().toISOString().slice(0, 10)))
+  y = kv(doc, y, 'Date:', fmtDate(todayISO()))
   y = licenseKv(doc, y, settings)
   y += 4
   y = section(doc, y, 'Work billed')
@@ -328,7 +358,7 @@ export function contractPDF(job, settings) {
   y = licenseKv(doc, y, settings)
   y = kv(doc, y, 'Customer:', job.customerName || '—')
   y = kv(doc, y, 'Job address:', job.address || '—')
-  y = kv(doc, y, 'Date:', fmtDate(new Date().toISOString().slice(0, 10)))
+  y = kv(doc, y, 'Date:', fmtDate(todayISO()))
   y += 4
   y = ensure(doc, y, 30)
   y = section(doc, y, '1. Scope of work')
@@ -338,9 +368,16 @@ export function contractPDF(job, settings) {
   doc.text(scopeLines, MARGIN, y)
   y += scopeLines.length * 6 + 2
   if (bid && (bid.finishGrade || bid.finishingBy)) {
-    const fg = FINISH_GRADES.find((g) => g.id === bid.finishGrade)?.label || 'Not specified'
-    const fb = FINISHING_BY.find((g) => g.id === bid.finishingBy)?.label || 'Not specified'
-    y = kv(doc, y, 'Finish:', `${fg} — finishing by ${fb}`)
+    const finishParts = []
+    if (bid.finishGrade) {
+      const fg = FINISH_GRADES.find((g) => g.id === bid.finishGrade)?.label
+      if (fg) finishParts.push(fg)
+    }
+    if (bid.finishingBy) {
+      const fb = FINISHING_BY.find((g) => g.id === bid.finishingBy)?.label
+      if (fb) finishParts.push(`finishing by ${fb}`)
+    }
+    if (finishParts.length) y = kv(doc, y, 'Finish:', finishParts.join(' — '))
   }
   y += 2
   y = ensure(doc, y, 30)
@@ -466,7 +503,7 @@ export function lienWaiverPDF(job, settings) {
   y = kv(doc, y, 'Customer:', job.customerName || '—')
   y = kv(doc, y, 'Job:', job.title || '—')
   y = kv(doc, y, 'Job address:', job.address || '—')
-  y = kv(doc, y, 'Date:', fmtDate(new Date().toISOString().slice(0, 10)))
+  y = kv(doc, y, 'Date:', fmtDate(todayISO()))
   y += 4
   y = section(doc, y, 'Waiver')
   doc.setFont('helvetica', 'normal')
@@ -554,7 +591,7 @@ export function businessPlanPDF(store, settings) {
   doc.setFont('helvetica', 'normal')
   doc.setFontSize(11)
   y = kv(doc, y, 'Business:', settings.businessName || BRAND)
-  y = kv(doc, y, 'Date:', fmtDate(new Date().toISOString().slice(0, 10)))
+  y = kv(doc, y, 'Date:', fmtDate(todayISO()))
   y = kv(doc, y, 'Status:', `Blueprint ${prog.blueprintDone}/${prog.blueprintTotal} done • Milestones ${prog.milestonesDone}/${prog.milestonesTotal} done`)
   y += 4
   doc.setFontSize(10)

@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
 import { askGemini, jobContextBlock, extractJson, bidExtractPrompt, PROMPT_CHIPS } from '../lib/gemini.js'
-import { nowISO, uid } from '../lib/store.js'
+import { nowISO, uid, daysFromTodayISO } from '../lib/store.js'
 
 export default function AiHelp({ store, job, onUpdateStore, goSettings, goJob }) {
   const settings = store.settings || {}
@@ -83,7 +83,7 @@ export default function AiHelp({ store, job, onUpdateStore, goSettings, goJob })
       }
       const newId = uid()
       const validityDays = Number(settings.quoteValidityDays ?? 30) || 0
-      const validUntil = validityDays > 0 ? new Date(Date.now() + validityDays * 86400000).toISOString().slice(0, 10) : ''
+      const validUntil = validityDays > 0 ? daysFromTodayISO(validityDays) : ''
       onUpdateStore((s) => {
         const j = s.jobs.find((x) => x.id === job.id)
         if (!j) return

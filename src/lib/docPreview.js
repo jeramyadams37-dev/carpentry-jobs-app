@@ -9,8 +9,8 @@
 //     totals?: [[label, amountString]], grand?: [label, amountString] }… ],
 //   sig?: [string] }
 import {
-  money, fmtDate, fmtDateTime, fmtHours, bidTotal, bidMaterialsTotal, bidOverhead,
-  effectiveLabor, acceptedBid, jobActuals, defaultPaymentPlan, paymentPlanAmounts,
+  money, fmtDate, todayISO, fmtDateTime, fmtHours, bidTotal, bidMaterialsTotal, bidOverhead,
+  effectiveLabor, acceptedBid, jobActuals, defaultPaymentPlan, paymentPlanAmounts, paymentPlanAmountsFor,
   salesTaxRate, bidTax, bidTaxableMaterials, FINISH_GRADES, FINISHING_BY,
   jobTimeTotals, hoursComparison, jobLaborRate, timeEntryHours,
 } from './store.js'
@@ -35,7 +35,7 @@ function base(job, settings) {
       ['Phone:', job.phone || '—'],
       ['Address:', job.address || '—'],
       ['Job:', job.title || '—'],
-      ['Date:', fmtDate(new Date().toISOString().slice(0, 10))],
+      ['Date:', fmtDate(todayISO())],
     ],
   }
 }
@@ -46,8 +46,6 @@ export function quotePreviewData(job, bid, settings) {
   d.kv.push(['Valid until:', bid.validUntil ? fmtDate(bid.validUntil) : '—'])
   const lic = licenseText(settings)
   if (lic) d.kv.push(['License(s):', lic])
-  const finishGrade = FINISH_GRADES.find((g) => g.id === bid.finishGrade)?.label || 'Not specified'
-  const finishingBy = FINISHING_BY.find((g) => g.id === bid.finishingBy)?.label || 'Not specified'
   const validText = bid.validUntil ? `This quote is valid until ${fmtDate(bid.validUntil)}.` : 'This quote is valid for 30 days from the date above.'
   const totals = [
     ['Materials', money(bidMaterialsTotal(bid))],
@@ -57,12 +55,26 @@ export function quotePreviewData(job, bid, settings) {
   if (Number(bid.overheadPct) > 0) totals.push([`Overhead (${Number(bid.overheadPct)}%)`, money(bidOverhead(bid))])
   totals.push(['TOTAL', money(bidTotal(bid))])
   totals.push([`Sales tax (${salesTaxRate(settings).toFixed(2)}% on taxable materials ${money(bidTaxableMaterials(bid))})`, money(bidTax(bid, settings))])
+  // Finish line: only when a finish detail is actually set — never a
+  // "Not specified" placeholder on a customer-facing quote.
+  const finishParts = []
+  if (bid.finishGrade) {
+    const fg = FINISH_GRADES.find((g) => g.id === bid.finishGrade)?.label
+    if (fg) finishParts.push(fg)
+  }
+  if (bid.finishingBy) {
+    const fb = FINISHING_BY.find((g) => g.id === bid.finishingBy)?.label
+    if (fb) finishParts.push(`finishing by ${fb}`)
+  }
+  // Payment schedule: same source and amounts as the quote PDF — the job's
+  // configured milestones, or the default 50/40/10 split when none is
+  // configured yet. Progress-billed jobs have no milestone schedule.
+  const plan = job.billingType !== 'progress'
+    ? paymentPlanAmountsFor(bidTotal(bid), (job.paymentPlan && job.paymentPlan.length ? job.paymentPlan : defaultPaymentPlan()))
+    : []
   d.sections = [
     { heading: 'Scope', text: bid.scope || job.description || '—' },
-    {
-      heading: 'Finish',
-      kv: [['Finish:', `${finishGrade} — finishing by ${finishingBy}`]],
-    },
+    ...(finishParts.length ? [{ heading: 'Finish', kv: [['Finish:', finishParts.join(' — ')]] }] : []),
     {
       heading: 'Line items',
       table: {
@@ -74,6 +86,7 @@ export function quotePreviewData(job, bid, settings) {
       totals,
       grand: ['TOTAL WITH TAX', money(bidTotal(bid) + bidTax(bid, settings))],
     },
+    ...(plan.length ? [{ heading: 'Payment schedule', lines: plan.map((m) => `• ${m.label} (${Number(m.pct) || 0}%) — ${money(m.amount)}`) }] : []),
     {
       heading: 'Notes',
       text: `${validText} Material prices can move between quote and build — if lumber or sheet-goods prices rise before work starts, the price will be re-quoted and agreed in writing before work starts. Price covers the scope listed; changes to scope are handled by a written change order.`,
@@ -105,12 +118,19 @@ export function contractPreviewData(job, settings) {
   if (lic) contractorKv.push(['License(s):', lic])
   contractorKv.push(['Customer:', job.customerName || '—'])
   contractorKv.push(['Job address:', job.address || '—'])
-  contractorKv.push(['Date:', fmtDate(new Date().toISOString().slice(0, 10))])
+  contractorKv.push(['Date:', fmtDate(todayISO())])
   // Same header block as the contract PDF: contractor first.
   d.kv = contractorKv
-  const finish = bid && (bid.finishGrade || bid.finishingBy)
-    ? `${FINISH_GRADES.find((g) => g.id === bid.finishGrade)?.label || 'Not specified'} — finishing by ${FINISHING_BY.find((g) => g.id === bid.finishingBy)?.label || 'Not specified'}`
-    : ''
+  const finishParts = []
+  if (bid && bid.finishGrade) {
+    const fg = FINISH_GRADES.find((g) => g.id === bid.finishGrade)?.label
+    if (fg) finishParts.push(fg)
+  }
+  if (bid && bid.finishingBy) {
+    const fb = FINISHING_BY.find((g) => g.id === bid.finishingBy)?.label
+    if (fb) finishParts.push(`finishing by ${fb}`)
+  }
+  const finish = finishParts.join(' — ')
   d.sections.push({ heading: '1. Scope of work', text: (bid && bid.scope) || job.description || '—', kv: finish ? [['Finish:', finish]] : [] })
   const priceTotals = [['Contract price', money(total)]]
   if (bid) priceTotals.push([`Sales tax (${salesTaxRate(settings).toFixed(2)}% on taxable materials — collected with payments)`, money(bidTax(bid, settings))])
@@ -189,7 +209,7 @@ export function timesheetPreviewData(job, settings) {
       ['Job:', job.title || '—'],
       ['Customer:', job.customerName || '—'],
       ['Job rate:', `${money(rate)}/hr`],
-      ['Date:', fmtDate(new Date().toISOString().slice(0, 10))],
+      ['Date:', fmtDate(todayISO())],
     ],
     sections: [],
     sig: [],

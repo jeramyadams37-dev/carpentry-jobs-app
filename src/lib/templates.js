@@ -4,7 +4,7 @@
 // Everything is editable after creation, like any job. Material prices
 // come from the price book where a price exists; the rest start at $0 for
 // the carpenter to fill in on the Bids tab. No prices are invented here.
-import { newJob, newBid, uid, nowISO } from './store.js'
+import { newJob, newBid, uid, nowISO, daysFromTodayISO } from './store.js'
 
 export const JOB_TEMPLATES = [
   {
@@ -133,7 +133,7 @@ export function jobFromTemplate(tpl, settings, takenCodes) {
   b.markupPct = Number(settings?.defaultMarkupPct ?? 20) || 0
   b.overheadPct = Number(settings?.defaultOverheadPct) || 0
   const validityDays = Number(settings?.quoteValidityDays ?? 30) || 0
-  b.validUntil = validityDays > 0 ? new Date(Date.now() + validityDays * 86400000).toISOString().slice(0, 10) : ''
+  b.validUntil = validityDays > 0 ? daysFromTodayISO(validityDays) : ''
   const book = settings?.priceBook || []
   b.materials = (tpl.materials || []).map((m) => {
     const hit = book.find((x) => (x.name || '').trim().toLowerCase() === (m.name || '').trim().toLowerCase())
